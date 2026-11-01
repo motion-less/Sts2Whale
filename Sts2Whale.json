@@ -3,7 +3,7 @@
   "name": "鲸鱼爬塔（求解器 + 战略助手）",
   "author": "DSH + Torch1230 + 穷仔(SpireStrategist)",
   "description": "鲸鱼爬塔 0.9.2：战斗求解器 + 战略助手 + 鲸鱼娘（LLM 解说）+ VTube Studio 皮套联动。局外自动选路选牌、战斗自动出牌，鲸鱼娘用角色卡口吻解说并驱动皮套表情、口型和受击动作。0.8 起皮套的情绪钩子改走 RitsuLib 生命周期事件（不再自挂 Harmony 补丁），并支持游戏内设置页。",
-  "version": "0.15.3",
+  "version": "0.16.0",
   "has_pck": false,
   "has_dll": true,
   "affects_gameplay": false,

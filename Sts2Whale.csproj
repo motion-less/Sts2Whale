@@ -19,7 +19,7 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <AssemblyName>Sts2Whale</AssemblyName>
     <RootNamespace>Sts2Whale</RootNamespace>
-    <Version>0.15.3</Version>
+    <Version>0.16.0</Version>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
