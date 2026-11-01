@@ -93,7 +93,11 @@ public static class AutoLoop
                 _closedForRun = false;
                 _runOverAt = 0;
                 _mapCloseDone = false;
-                // 正常游玩时完全不探测（零开销）；只有「刚结束一把、等着开下一把」才继续往下走主菜单。
+                // 局内：清掉「等下一把」的意图。
+                // 这是踩过的坑：_wantNextRun 一旦被上一把置 true 就没人清，
+                // 之后每 5 秒都会在局内误走一遍「本局已结束」→ 反复暂停战略助手。
+                if (InRunNow()) { _wantNextRun = false; return; }
+                // 不在局内（主菜单 / 收尾页）：只有「等着开下一把」才继续往下走菜单。
                 if (!_wantNextRun) return;
             }
 
@@ -316,6 +320,13 @@ public static class AutoLoop
         _nextAt = Time.GetTicksMsec() / 1000.0 + GapSeconds;
         BridgeLog.Info($"auto-loop: {what} → {pick}");
         _ = RequestApi.Respond(id, new[] { pick });
+    }
+
+    /// <summary>是否正处在一次对局里（主菜单为 false）——用来区分「局内」和「等下一把」。</summary>
+    private static bool InRunNow()
+    {
+        try { return MegaCrit.Sts2.Core.Runs.RunManager.Instance is { IsInProgress: true }; }
+        catch { return false; }
     }
 
     private static bool RunOver()
