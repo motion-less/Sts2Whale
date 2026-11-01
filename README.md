@@ -128,3 +128,14 @@ unzip sts2-whale-mod-v0.14.0.zip && cd sts2-whale-mod-v0.14.0
 求解器与战略助手分别是 MIT（见 `LICENSE-CombatSolver-MIT.txt` 与上游仓库）；本项目自身 MIT。
 
 > 皮套素材（Live2D 模型）**不在分发包里**，也禁止二次分发；见 [readme/AVATAR.md](readme/AVATAR.md) 的授权一节。
+
+## 第三方代码
+
+本仓库直接内嵌（vendored）两个上游项目的源码，它们不是本项目原创：
+
+| 目录 | 上游 | 许可 | 快照 |
+|---|---|---|---|
+| `src/solver/` | [CombatSolver](https://github.com/Torch1230/CombatSolver) | MIT（`LICENSE-CombatSolver-MIT.txt`） | `main` @ `5c773ca` |
+| `src/strategist/` | [SpireStrategist](https://github.com/shaokangqian4-art/SpireStrategist) | MIT（`LICENSE-SpireStrategist-MIT.txt`） | v0.6.22 |
+
+每个目录下都有 `VENDORED.md`，写明上游地址、快照版本和本地改动了哪几个文件。
