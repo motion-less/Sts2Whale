@@ -73,9 +73,9 @@ internal static class WhaleSettings
                 .AddString("llm.model", ModSettingsText.Literal("模型名"),
                     StringBind(_llm, "llm.model", "model", "deepseek-flash", ReloadBrain),
                     ModSettingsText.Literal("deepseek-flash"))
-                .AddString("llm.apiKey", ModSettingsText.Literal("API Key"),
-                    StringBind(_llm, "llm.apiKey", "apiKey", "", ReloadBrain),
-                    ModSettingsText.Literal("sk-..."))
+                .AddCustom("llm.apiKey", ModSettingsText.Literal("API Key"),
+                    _ => BuildApiKeyRow(),
+                    ModSettingsText.Literal("只存在你本机的 llm.json。输入框始终以圆点显示，界面上不会出现明文。"))
                 .AddIntSlider("llm.maxTokens", ModSettingsText.Literal("单句最大 token"),
                     IntBind(_llm, "llm.maxTokens", "maxTokens", 800, ReloadBrain),
                     128, 4096, 64, v => v.ToString(),
@@ -155,6 +155,87 @@ internal static class WhaleSettings
                     ModSettingsText.Literal("mod 仍在运行"),
                     ModSettingsText.Literal("直接编辑 mod 目录下的三个 json 文件即可；改完重启游戏。")));
         }
+    }
+
+    // ------------------------------------------------------------------ API Key
+
+    /// <summary>
+    /// API Key 专用行：输入框 <c>Secret = true</c>（圆点显示），且**不回填已保存的值** ——
+    /// 界面上不出现明文，连控件里都不放。只提示「已配置 / 未配置」和长度。
+    /// </summary>
+    private static Control BuildApiKeyRow()
+    {
+        var box = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        box.AddThemeConstantOverride("separation", 4);
+
+        var row = new HBoxContainer();
+        var edit = new LineEdit
+        {
+            Secret = true,                       // 圆点，不信手能看到
+            PlaceholderText = "sk-...（输入后点保存）",
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+
+        var save = new Button { Text = "保存" };
+        var clear = new Button { Text = "清空" };
+        var status = new Label { Text = "" };
+        status.Modulate = new Color(1, 1, 1, 0.65f);
+
+        void ShowState(string prefix)
+        {
+            try
+            {
+                var key = _llm?.GetString("apiKey", "") ?? "";
+                status.Text = key.Length == 0
+                    ? prefix + "未配置（只用本地垫话）"
+                    : prefix + $"已配置（{key.Length} 位）";
+            }
+            catch { status.Text = prefix; }
+        }
+
+        save.Pressed += () =>
+        {
+            try
+            {
+                var key = (edit.Text ?? "").Trim();
+                if (key.Length == 0) { ShowState("输入框是空的，没有改动。"); return; }
+                _llm?.SetString("apiKey", key);
+                _llm?.Save();
+                edit.Text = "";                  // 存完立刻清空，不留在控件里
+                ReloadBrain();
+                ShowState("已保存。");
+                BridgeLog.Info("[settings] API Key 已更新");
+            }
+            catch (Exception e)
+            {
+                status.Text = "保存失败：" + e.Message;
+            }
+        };
+
+        clear.Pressed += () =>
+        {
+            try
+            {
+                _llm?.SetString("apiKey", "");
+                _llm?.Save();
+                edit.Text = "";
+                ReloadBrain();
+                ShowState("已清空。");
+                BridgeLog.Info("[settings] API Key 已清空");
+            }
+            catch (Exception e)
+            {
+                status.Text = "清空失败：" + e.Message;
+            }
+        };
+
+        row.AddChild(edit);
+        row.AddChild(save);
+        row.AddChild(clear);
+        box.AddChild(row);
+        box.AddChild(status);
+        ShowState("");
+        return box;
     }
 
     // ------------------------------------------------------------------ 角色卡
