@@ -373,9 +373,10 @@ internal sealed partial class PartialAutopilot
         {
             var room=NMerchantRoom.Instance;
             if(room==null){gate.ResetPending();return;}
+            // 合并版：上游的 shopFoulUses 和本地的 act3Spree 必须一起复位。
+            // （曾经拆成两个 if，第二个永远进不去 → shopFoulUses 跨店累加）
             if(shoppingRoom!=merchant){shoppingRoom=merchant;shopArrivalGold=service.Player.Gold;shopBoughtCards=0;
-                act3SpreeArmed=false;act3SpreeFinished=false;}
-            if(shoppingRoom!=merchant){shoppingRoom=merchant;shopArrivalGold=service.Player.Gold;shopBoughtCards=0;shopFoulUses=0;}
+                shopFoulUses=0;act3SpreeArmed=false;act3SpreeFinished=false;}
             if(TickFoulMerchant(room))return;
             if(shopFoulUses>0)shopArrivalGold=Math.Max(shopArrivalGold,service.Player.Gold);
             if(screen is NMerchantRoom)
