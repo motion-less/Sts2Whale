@@ -7,11 +7,10 @@
 | 上游 | https://github.com/shaokangqian4-art/SpireStrategist |
 | 许可 | MIT，全文见仓库根目录 [`LICENSE-SpireStrategist-MIT.txt`](../../LICENSE-SpireStrategist-MIT.txt) |
 | 版权 | Copyright (c) 2026 穷仔（shaokangqian4-art） |
-| 快照 | **v0.6.22**（`SpireStrategist.Mod/AdvisorPanel.cs` 里的版本号可自证） |
+| 快照 | **v0.6.55**（`SpireStrategist.Mod/Entry.cs` 的加载日志可自证） |
 | 位置对应 | 上游 `src/` → 本目录 |
 
-> 上游现在已经到 **v0.6.55**，比这份快照多 54 个文件、另有一批改动。
-> 也就是说：**本目录落后上游很多**，上游修的问题这里没有。
+> 2026-11-01 已从 v0.6.22 升到 **v0.6.55**（跨 33 个版本），本地 8 处改动全部保留。
 
 ## 本地改动
 
@@ -28,20 +27,27 @@
 | `SpireStrategist.Mod/ClimbShop.cs` | 第三幕清仓：金币 > 400 就随机买遗物 | 独立版没有清仓逻辑 |
 | `SpireStrategist.Mod/SnapshotReader.cs` | 卡面描述走游戏本地化 + 兜底异常 | 商店预览卡的变量没填齐时游戏会抛异常 |
 
-**新增 2 个目录**（上游不在 `src/` 下）：
+**额外带进来的 2 个目录**（上游放在仓库根，不在 `src/` 下）：
 
-| 目录 | 内容 |
-|---|---|
-| `data/` | `cards-v0.111.0.json`、`event-cards-v0.111.0.json`、`relic-test-ids.json`（上游在别处生成/存放） |
-| `localization/` | `en.json` |
+| 目录 | 内容 | 用途 |
+|---|---|---|
+| `data/` | 12 个 json：卡表 / 事件卡 / 三个新角色的 prior+cards / Defect 系列 / `relic-test-ids` | `Sts2Whale.csproj` 以 `EmbeddedResource` 嵌入 |
+| `localization/` | `en.json` | 同上 |
+
+v0.6.55 新增了 9 个必须嵌入的资源（Regent / Necrobinder / Silent / Defect 的 prior 与卡表），
+`Sts2Whale.csproj` 已同步补齐 —— **漏掉这些编译照样过，运行时读资源才会报错**。
 
 ## 同步上游
 
 ```bash
-git clone --depth 1 --branch v0.6.55 \
+git clone --depth 1 --branch <新版本> \
   https://github.com/shaokangqian4-art/SpireStrategist.git /tmp/ss
 diff -rq /tmp/ss/src src/strategist
 ```
 
-因为是跨了 33 个版本，**不能直接覆盖**。建议按文件挑：先看上游 CHANGELOG 里哪些修的是 bug，
-再逐个合到本目录，合完保留上表那 8 个文件的本地改动。
+0.6.22 → 0.6.55 的实际步骤：
+
+1. 整个 `src/` 换成上游的
+2. 本地 8 处改动用三方合并重放：`git merge-file -p <我们的> <旧基线> <新版> > 结果`
+3. 补 `data/`、`localization/`，并把上游新增的 `EmbeddedResource` 抄进 `Sts2Whale.csproj`
+4. 编译（0 错误只代表符号对得上，**必须再实跑验证**）
