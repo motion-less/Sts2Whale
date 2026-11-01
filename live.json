@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "roomId": 0,
+  "maxPerMinute": 3,
+  "minChars": 2,
+  "maxChars": 60
+}

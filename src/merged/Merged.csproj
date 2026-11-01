@@ -1,0 +1,71 @@
+<Project Sdk="Godot.NET.Sdk/4.5.1">
+  <!--
+    「鲸鱼爬塔」= CombatSolver（MIT，© Torch1230）+ Sts2AgentBridge 合并成的一个 mod。
+
+    只做两件事：
+      1. 两边的源码编进同一个程序集 —— 桥接可以直接调 SolverController（连 internal 都能调，
+         不用反射、不用轮询）；
+      2. 入口只留一个：[ModInitializer] 在 ./Entry.cs 里，先起求解器，再起桥接。
+
+    求解器的构建需求照原样保留：sts2/GodotSharp/0Harmony 引用 + Krafs.Publicizer 公开化 sts2 +
+    RitsuLib 引用（求解器自己的依赖）。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>13.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>true</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <AssemblyName>Sts2Whale</AssemblyName>
+    <RootNamespace>Sts2Whale</RootNamespace>
+    <Version>0.1.0</Version>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <NoWarn>$(NoWarn);CS0436;CS0618</NoWarn>
+    <DefineConstants>$(DefineConstants);MERGED</DefineConstants>
+
+    <SteamRoot Condition="'$(SteamRoot)' == ''">$(HOME)/Library/Application Support/Steam</SteamRoot>
+    <Sts2Dir Condition="'$(Sts2Dir)' == ''">$(SteamRoot)/steamapps/common/Slay the Spire 2</Sts2Dir>
+    <Sts2DataDir Condition="'$(Sts2DataDir)' == ''">$(Sts2Dir)/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64</Sts2DataDir>
+    <RitsuWorkshopRoot Condition="'$(RitsuWorkshopRoot)' == ''">$(SteamRoot)/steamapps/workshop/content/2868840/3747602295</RitsuWorkshopRoot>
+    <RitsuLibDir Condition="'$(RitsuLibDir)' == ''">$(RitsuWorkshopRoot)/lib/0.111.0</RitsuLibDir>
+    <RitsuLibReferenceTarget Condition="'$(RitsuLibReferenceTarget)' == ''">0.111.0</RitsuLibReferenceTarget>
+    <RitsuLibReferencesProps>$(RitsuWorkshopRoot)/RitsuLib.References.props</RitsuLibReferencesProps>
+  </PropertyGroup>
+
+  <Import Project="$(RitsuLibReferencesProps)" Condition="Exists('$(RitsuLibReferencesProps)')" />
+
+  <ItemGroup>
+    <Compile Include="../CombatSolver/src/**/*.cs" />
+    <Compile Include="../dsh-sts2/mod/**/*.cs" />
+    <Compile Remove="../dsh-sts2/mod/ModEntry.cs" />
+    <!-- 合并版用直接调用版 SolverBridge（无反射），反射版只在独立构建里用 -->
+    <Compile Remove="../dsh-sts2/mod/SolverBridge.cs" />
+    <Compile Include="./*.cs" />
+    <Compile Include="../SpireStrategist/src/**/*.cs"
+             Exclude="../SpireStrategist/src/**/obj/**;../SpireStrategist/src/**/bin/**" />
+    <EmbeddedResource Include="../CombatSolver/src/UI/English.json" LogicalName="CombatSolver.UI.English.json" />
+    <EmbeddedResource Include="../SpireStrategist/localization/en.json" LogicalName="SpireStrategist.English.json" />
+    <EmbeddedResource Include="../SpireStrategist/data/cards-v0.111.0.json" LogicalName="SpireStrategist.Cards.json" />
+    <EmbeddedResource Include="../SpireStrategist/data/event-cards-v0.111.0.json" LogicalName="SpireStrategist.EventCards.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Krafs.Publicizer" Version="2.3.0" PrivateAssets="all" />
+    <Publicize Include="sts2" IncludeVirtualMembers="false" IncludeCompilerGeneratedMembers="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="sts2" HintPath="$(Sts2DataDir)/sts2.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(Sts2DataDir)/0Harmony.dll" Private="false" />
+    <Reference Include="GodotSharp" HintPath="$(Sts2DataDir)/GodotSharp.dll" Private="false" />
+    <Reference Include="STS2-RitsuLib" HintPath="$(RitsuLibDir)/STS2-RitsuLib.dll" Private="false"
+               Condition="!Exists('$(RitsuLibReferencesProps)')" />
+  </ItemGroup>
+
+  <Target Name="ValidateGameInstall" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(Sts2DataDir)/sts2.dll')" Text="找不到 $(Sts2DataDir)/sts2.dll" />
+  </Target>
+</Project>

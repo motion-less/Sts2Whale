@@ -1,0 +1,120 @@
+{
+  "enabled": true,
+  "wsUrl": "ws://127.0.0.1:8001",
+  "pluginName": "Sts2Whale_Avatar",
+  "pluginDeveloper": "Sts2Whale",
+  "mouthParam": "MouthOpen",
+  "idleSway": true,
+  "swayAmplitude": 1.0,
+  "swaySmoothing": 0.15,
+  "swayMaxAngle": 9,
+  "swayMaxUp": 2.0,
+  "swayMaxDown": 9.0,
+  "cooldownMs": 900,
+  "speech": {
+    "mode": "tts",
+    "voice": "Tingting",
+    "gain": 0.9,
+    "rate": 1.0,
+    "maxChars": 80,
+    "onlyBrain": true,
+    "maxOpen": 0.75,
+    "smoothing": 0.22,
+    "engine": "daemon",
+    "edgeVoice": "zh-CN-XiaoyiNeural",
+    "edgeRate": "+8%",
+    "edgePitch": "+0Hz",
+    "edgeCommand": "",
+    "daemonPort": 48765,
+    "daemonPython": "",
+    "daemonScript": "",
+    "daemonIdleMinutes": 30
+  },
+  "emotions": {
+    "attack": {
+      "expression": "黑脸",
+      "holdMs": 900,
+      "params": {
+        "FaceAngry": 0.7
+      }
+    },
+    "hurt_small": {
+      "expression": "＞＜",
+      "holdMs": 800
+    },
+    "hurt": {
+      "expression": "流冷汗",
+      "holdMs": 1200,
+      "params": {
+        "MouthSmile": -0.4
+      }
+    },
+    "hurt_big": {
+      "expression": "流泪",
+      "holdMs": 1800,
+      "params": {
+        "MouthSmile": -0.6
+      }
+    },
+    "combat_start": {
+      "expression": "前倾",
+      "holdMs": 1200
+    },
+    "elite": {
+      "expression": "黑框眼镜",
+      "holdMs": 3000
+    },
+    "reward": {
+      "expression": "爱心眼",
+      "holdMs": 2600,
+      "params": {
+        "MouthSmile": 0.7
+      }
+    },
+    "victory": {
+      "expression": "爱心眼",
+      "holdMs": 3000,
+      "params": {
+        "MouthSmile": 0.8
+      }
+    },
+    "death": {
+      "expression": "流泪",
+      "holdMs": 4000
+    },
+    "shop": {
+      "expression": "屑屑眼",
+      "holdMs": 2200
+    },
+    "rest": {
+      "expression": "脸红",
+      "holdMs": 2200
+    },
+    "level": {
+      "expression": "脸红",
+      "holdMs": 2000,
+      "params": {
+        "MouthSmile": 0.5
+      }
+    },
+    "card_select": {
+      "expression": "圈圈眼",
+      "holdMs": 1600
+    }
+  },
+  "startupExpressions": {
+    "屑屑眼": false,
+    "钢盆": false
+  },
+  "idleParams": {
+    "MouthSmile": 0.15
+  },
+  "blockExpression": "钢盆",
+  "hitTilt": true,
+  "hitDegreesPerDamage": 1.0,
+  "hitMaxDegrees": 40,
+  "thinkingExpressions": [
+    "圈圈眼",
+    "加载"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "baseUrl": "https://api.deepseek.com",
+  "model": "deepseek-flash",
+  "apiKey": "",
+  "maxTokens": 800,
+  "timeout": 30
+}

@@ -1,0 +1,27 @@
+# 构建产物（Godot SDK 默认把中间产物写进 .godot/）
+.godot/
+obj/
+bin/
+*.user
+*.suo
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 打包产物
+_archive/
+*.zip
+*.sha256
+
+# 编辑器 / 系统
+.vs/
+.idea/
+.DS_Store
+__MACOSX/
+
+# 运行时生成（ModPaths 的兜底目录）
+userdata/
+
+# 注意：llm.json / vts.json / live.json 是随包的模板，必须保持空值
+# （apiKey 为空、房间号为 0、python 路径为空）。release.sh 打包时会再清一遍并自检。
