@@ -48,10 +48,12 @@ public static class BridgePump
         T("events", EventFeed.Tick);
         T("state", StatePush.Tick);
         T("stream", StreamTicker.Tick);
+        T("streak", StreakHud.Tick);
 #if MERGED
         T("strat", StrategistBridge.Tick);
         T("stratlog", StrategistLog.Tick);
         T("autoloop", AutoLoop.Tick);
+        T("fanfare", LossSong.Tick);
 #endif
         T("solver", SolverBridge.Tick);
         T("request", RequestApi.Tick);

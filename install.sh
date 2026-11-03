@@ -30,6 +30,15 @@ if [ ! -f "$DEST/live.json" ]; then cp "$HERE/live.json" "$DEST/live.json"; fi
 put "$HERE/tts_daemon.py" "$DEST/tts_daemon.py"
 put "$HERE/persona.md" "$DEST/persona.md"
 put "$HERE/LICENSE-CombatSolver-MIT.txt" "$DEST/LICENSE-CombatSolver-MIT.txt"
+# 资源（失败曲之类）：有就带过去，别覆盖玩家自己放的
+if [ -d "$HERE/assets" ]; then
+  mkdir -p "$DEST/assets"
+  for f in "$HERE"/assets/*; do
+    [ -f "$f" ] || continue
+    [ "$(basename "$f")" = "README.md" ] && continue
+    put "$f" "$DEST/assets/$(basename "$f")"
+  done
+fi
 # 文档（有就带上）
 if [ -f "$HERE/README.md" ]; then put "$HERE/README.md" "$DEST/README.md"; fi
 if [ -d "$HERE/readme" ]; then mkdir -p "$DEST/readme" && cp "$HERE"/readme/*.md "$DEST/readme/"; fi

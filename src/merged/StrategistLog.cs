@@ -95,14 +95,26 @@ public static class StrategistLog
 
             var name = option?.Name ?? recommended;
             var why = option == null ? "" : Describe(decision.Evaluation, recommended);
+
+            // 选牌必须把牌面信息带上：鲸鱼看得见牌名和理由、看不见牌，费用/效果全靠猜，
+            // 而角色卡又要求「理由里带数字」——只给它牌名，它就会编一个费用。
+            // 费用、类型、效果都从快照里取（SnapshotReader.ReadCard），是这一刻游戏里的真值。
+            var card = decision.Kind == "cards" ? option?.Card : null;
+            var cost = CardCost(card);
+
             var speak = decision.Kind switch
             {
-                "cards" => why.Length == 0 ? $"拿{name}" : $"拿{name} {Short(why)}",
+                "cards" => string.Join(" ", new[] { $"拿{name}", cost, why.Length == 0 ? "" : Short(why) }
+                    .Where(part => !string.IsNullOrEmpty(part))),
                 "rest" => $"营火选{name}",
                 _ => null,
             };
             Add(decision.Kind == "cards" ? "card" : decision.Kind,
-                why.Length == 0 ? $"战略助手{what}「{name}」" : $"战略助手{what}「{name}」：{why}", speak);
+                why.Length == 0
+                    ? $"战略助手{what}「{name}」"
+                    : $"战略助手{what}「{name}」：{why}",
+                speak,
+                CardFacts(card));
         }
         catch { }
     }
@@ -146,17 +158,79 @@ public static class StrategistLog
             }
 
             var gold = player.Gold;
-            if (_lastGold >= 0 && Math.Abs(gold - _lastGold) >= 25)
+            if (_lastGold >= 0 && gold != _lastGold)
             {
                 var delta = gold - _lastGold;
                 if (delta < 0)
-                    Add("shop", $"商店花了 {-delta} 金（剩 {gold}）", $"花{-delta}金 剩{gold}");
-                else
+                {
+                    if (-delta >= 25)
+                        Add("shop", $"商店花了 {-delta} 金（剩 {gold}）", $"花{-delta}金 剩{gold}");
+                }
+                else if (delta >= 100)
+                {
+                    // 小额进账（<100）太吵：不记事件、也不叫鲸鱼娘说话
                     Add("shop", $"金币 +{delta}（现 {gold}）");
+                }
             }
             _lastGold = gold;
         }
         catch { }
+    }
+
+    /// <summary>
+    /// 牌面费用的短写法：`1 费` / `X 费` / `无法打出`；有星费时再补 `+ 2 星`。
+    /// 取的是 <c>SnapshotReader.ReadCard</c> 在决策那一刻抓到的快照，不是猜的。
+    /// </summary>
+    private static string CardCost(SpireStrategist.Core.CardSnapshot card)
+    {
+        if (card == null) return "";
+        var cost = card.CostsX ? "X 费" : card.Cost < 0 ? "无法打出" : $"{card.Cost} 费";
+        if (card.CostsStarX) cost += " + X 星";
+        else if (card.StarCost > 0) cost += $" + {card.StarCost} 星";
+        return cost;
+    }
+
+    /// <summary>
+    /// 给模型的一行牌面：`剑柄打击：1 费 · 攻击牌 · 普通 · '造成 9 点伤害，抽 1 张牌。'`
+    /// 费用、类型、效果都是决策那一刻从 <c>SnapshotReader.ReadCard</c> 抓的，不是猜的。
+    /// </summary>
+    private static string CardFacts(SpireStrategist.Core.CardSnapshot card)
+    {
+        if (card == null) return null;
+        var type = card.Type switch
+        {
+            "Attack" => "攻击牌",
+            "Skill" => "技能牌",
+            "Power" => "能力牌",
+            "Status" => "状态牌",
+            "Curse" => "诅咒牌",
+            _ => "",
+        };
+        var rarity = card.Rarity switch
+        {
+            "Basic" => "基础",
+            "Common" => "普通",
+            "Uncommon" => "罕见",
+            "Rare" => "稀有",
+            "Special" => "特殊",
+            _ => "",
+        };
+
+        var parts = new[] { CardCost(card), type, rarity }.Where(p => !string.IsNullOrEmpty(p)).ToList();
+        var text = CardText(card.Description);
+        if (text.Length > 0) parts.Add($"'{text}'");
+        return $"{card.Name}：{string.Join(" · ", parts)}";
+    }
+
+    /// <summary>卡面效果压成一行：去 BBCode / 换行，最多 60 字（再长会挤掉决定本身）。</summary>
+    private static string CardText(string description)
+    {
+        if (string.IsNullOrWhiteSpace(description)) return "";
+        var text = ScreenApi.CleanLong(description);
+        // CleanLong 把 [gold]…[/gold] 换成空格，贴着中文标点时会留下「伤害 ，」这种缝
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+([，。、；：！？）】」』…])", "$1");
+        if (text.Length > 60) text = text.Substring(0, 60).TrimEnd() + "…";
+        return text;
     }
 
     private static string Describe(SpireStrategist.Core.Evaluation evaluation, string key)
@@ -207,7 +281,7 @@ public static class StrategistLog
         return text.Length <= 10 ? text : text.Substring(0, 10);
     }
 
-    private static void Add(string kind, string text, string speakLine = null)
+    private static void Add(string kind, string text, string speakLine = null, string facts = null)
     {
         if (Time.GetTicksMsec() / 1000.0 < _quietUntil) return;   // 重建基线阶段：不记、不播
         var entry = new Entry(++_seq, DateTime.Now.ToString("HH:mm:ss"), kind, text);
@@ -222,7 +296,7 @@ public static class StrategistLog
         // 有 API key 就让模型自己组织这句话（气泡里显示的是它的回复）；没有就退回模板短句。
         if (!SayEnabled) return;
         if (WhaleBrain.Enabled)
-            WhaleBrain.Narrate(kind, text, speakLine ?? text);
+            WhaleBrain.Narrate(kind, text, speakLine ?? text, facts);
         else if (!string.IsNullOrEmpty(speakLine))
             Speak(speakLine);
     }

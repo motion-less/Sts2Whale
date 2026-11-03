@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 
@@ -16,7 +19,8 @@ public static class EventFeed
 {
     private const int Capacity = 100;
     private const int MaxItems = 40;
-    private const ulong ThrottleMs = 400;
+    private const ulong ThrottleMs = 400;        // 算 cheap signature 的频率
+    private const ulong FallbackScanMs = 2000;   // 签名没变也至少 2 秒扫一次（兜住同屏内的变化）
 
     private sealed class Entry
     {
@@ -59,7 +63,13 @@ public static class EventFeed
     private static long _seq;
     private static ulong _lastTickMs;
     private static string _lastSignature;
+    private static string _lastCheapSignature;
+    private static ulong _lastFullScanMs;
+    private static bool _scanRequested;
     private static bool _errorLogged;
+
+    /// <summary>让下一次 Tick 立刻做一次完整扫描（屏幕变化的事件回调可以调它）。</summary>
+    public static void RequestScan() => _scanRequested = true;
 
     /// <summary>Called from BridgePump.Drain on the Godot main thread.</summary>
     public static void Tick()
@@ -67,6 +77,17 @@ public static class EventFeed
         var now = Time.GetTicksMsec();
         if (_lastTickMs != 0 && now - _lastTickMs < ThrottleMs) return;
         _lastTickMs = now;
+
+        // 先算一个很便宜的「房间 / 浮层数 / 战斗 / 地图 / 层数」签名：
+        // 没变就不扫场景树，只在变化时或每 2 秒兜底时做完整的 ScreenApi.Inspect()。
+        // 以前是固定 400ms 全扫一次，战斗里屏幕其实几秒都不变，白烧主线程。
+        var cheap = CheapSignature();
+        var changed = cheap != _lastCheapSignature;
+        if (!_scanRequested && !changed && _lastFullScanMs != 0 && now - _lastFullScanMs < FallbackScanMs)
+            return;
+        _lastCheapSignature = cheap;
+        _lastFullScanMs = now;
+        _scanRequested = false;
 
         try
         {
@@ -175,6 +196,21 @@ public static class EventFeed
             _errorLogged = true;
             BridgeLog.Warn("event feed tick failed: " + e.Message);
         }
+    }
+
+    /// <summary>不碰场景树、只读几个全局节点/状态的便宜签名，用来判断「屏幕可能变了」。</summary>
+    private static string CheapSignature()
+    {
+        try
+        {
+            var run = RunManager.Instance?.DebugOnlyGetState();
+            var room = run?.CurrentRoom;
+            var overlay = NOverlayStack.Instance?.ScreenCount ?? 0;
+            var map = NMapScreen.Instance?.IsOpen == true ? 1 : 0;
+            var combat = CombatManager.Instance?.IsInProgress == true ? 1 : 0;
+            return $"{room?.GetType().Name}|{run?.TotalFloor ?? -1}|{overlay}|{map}|{combat}";
+        }
+        catch { return ""; }
     }
 
     /// <summary>GET /events?since=n — events with seq &gt; since.</summary>

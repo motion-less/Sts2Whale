@@ -2445,6 +2445,27 @@ internal static partial class SolverController
         return (baseline + progress.ReviewedWorldlines, perSecond);
     }
 
+    /// <summary>
+    /// 桥接用：当前搜索里「当前路线摘要」的一句话（预计战损）。
+    /// 和 <see cref="WorldlineProgressSnapshot"/> 一样不依赖 overlay 是否显示。
+    /// </summary>
+    public static string CurrentProjectedLossText()
+    {
+        try
+        {
+            SolverProgress? progress = CaptureDevelopmentMonitorProgress();
+            if (progress == null) return "";
+
+            SolverOverlaySnapshot? snapshot = progress.SpeculativeRoutePreview is { Turns.Count: > 0 } speculative
+                ? SolverOverlaySnapshot.CaptureSpeculativeRoute(speculative)
+                : progress.CurrentTurnPreview is { } preview
+                    ? SolverOverlaySnapshot.CaptureCurrentTurn(preview)
+                    : null;
+            return snapshot == null ? "" : SolverOverlaySnapshot.ProjectedLossText(snapshot);
+        }
+        catch { return ""; }
+    }
+
     internal static SolverProgress? CaptureDevelopmentMonitorProgress()
     {
         SolverSearchSession? search = Volatile.Read(ref _search);

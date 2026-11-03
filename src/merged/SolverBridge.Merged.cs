@@ -313,6 +313,12 @@ public static class SolverBridge
             if (result == null || ReferenceEquals(result, _lastPublishResult)) return;
             _lastPublishResult = result;
 
+            // 求解器这一轮算完、只剩阵亡路线 → 开始放失败曲；之后重算出存活路线会自己收。
+            // 注意：搜索中途的「未找到生还路线」只是当前候选的预览（SpeculativeRoutePreview），
+            // 不进 LatestResult，也不会走到这里；真开始只认「本次搜索已经结束」的结果。
+            if (!result.OnlyDeathRoutesFound || !SolverController.IsSearching)
+                LossSong.OnSolverResult(result.OnlyDeathRoutesFound);
+
             var hpLost = result.ProjectedBattleHpLost;
             var endedTurn = result.CombatEndedTurn;
             var hpSoFar = result.BattleHpLostSoFar;
@@ -431,6 +437,47 @@ public static class SolverBridge
     {
         try { return SolverController.WorldlineProgressSnapshot(); }
         catch { return (0, 0); }
+    }
+
+    /// <summary>求解器的内存快照（/solver/memory 排障用）。</summary>
+    public static Dictionary<string, object> MemorySnapshot()
+    {
+        try
+        {
+            var snapshot = SolverController.CaptureSearchMemoryUsage();
+            return new Dictionary<string, object>
+            {
+                ["ok"] = true,
+                ["processWorkingSetMB"] = snapshot.ProcessWorkingSetBytes / 1048576L,
+                ["physicalTotalMB"] = snapshot.PhysicalMemoryTotalBytes / 1048576L,
+                ["physicalUsedMB"] = snapshot.PhysicalMemoryUsedBytes / 1048576L,
+                ["physicalAvailableMB"] = snapshot.PhysicalMemoryAvailableBytes is long available
+                    ? available / 1048576L
+                    : null,
+                ["hasPhysicalSample"] = snapshot.HasPhysicalMemorySample,
+                ["systemMemoryLimitMB"] = snapshot.SystemMemoryLimitBytes == long.MaxValue
+                    ? null
+                    : snapshot.SystemMemoryLimitBytes / 1048576L,
+                ["configuredBudgetMB"] = snapshot.ConfiguredMemoryBudgetBytes / 1048576L,
+                ["serverGc"] = snapshot.IsServerGc,
+                ["searchActive"] = snapshot.SearchActive,
+            };
+        }
+        catch (Exception e)
+        {
+            return new Dictionary<string, object>
+            {
+                ["ok"] = false,
+                ["error"] = e.GetType().Name + ": " + e.Message,
+            };
+        }
+    }
+
+    /// <summary>当前搜索的「当前路线摘要」：预计战损（气泡第二行用，不依赖 overlay 显隐）。</summary>
+    public static string ProjectedLoss()
+    {
+        try { return SolverController.CurrentProjectedLossText(); }
+        catch { return ""; }
     }
 
     /// <summary>求解器刚因为「预计本回合死亡」交还了操作权。</summary>

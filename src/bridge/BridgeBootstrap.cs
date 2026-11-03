@@ -38,6 +38,9 @@ public static class BridgeBootstrap
         HttpBridge.Start();
         AgentUi.Load();
         WhaleUi.Install();
+
+        // 右上角「设置」按钮下面的连胜面板（每个职业一行 当前/最高）
+        StreakHud.Install();
         Sts2Whale.Whale.WhaleAvatar.Install();
 
         // 直播弹幕（live.json 存在且 enabled 才开）

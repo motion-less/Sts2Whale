@@ -58,6 +58,8 @@ public static class WhaleBrain
     private static string _pendingKind;
     private static string _pendingText;
     private static string _pendingFallback;
+    private static string _pendingFacts;              // 牌面（费用/类型/效果），只给选牌决策带
+    private static Action<string>? _pendingCallback;   // 弹幕：真说出话之后把这一轮记进上下文
     private static string _lastShown;
 
     public static bool Enabled
@@ -69,7 +71,11 @@ public static class WhaleBrain
 
     /// <summary>战略助手决定了一条 → 让模型用鲸鱼的口吻说一句。</summary>
     /// <param name="fallback">模型不可用/超时时说的模板句，保证气泡不空。</param>
-    public static void Narrate(string kind, string text, string fallback)
+    /// <param name="facts">
+    /// 这一条决定涉及的硬事实（目前是选牌的一行牌面：费用 · 类型 · 稀有度 · 效果）。
+    /// 模型看不见牌面，不给事实就会按牌名猜费用 —— 角色卡又要求带数字，于是经常报错价。
+    /// </param>
+    public static void Narrate(string kind, string text, string fallback, string? facts = null)
     {
         EnsureLoaded();
         if (!_enabled || string.IsNullOrEmpty(_apiKey))
@@ -84,13 +90,21 @@ public static class WhaleBrain
             _pendingKind = kind;
             _pendingText = text;
             _pendingFallback = fallback;
+            _pendingFacts = facts;
+            _pendingCallback = null;            // 新决定顶掉了还没答的弹幕，那条不该再记进上下文
         }
         StartWorker();
         TrySignal();
     }
 
-    /// <summary>直播弹幕：让鲸鱼娘回一句（不回也行，模型不可用时直接跳过）。</summary>
-    public static void ReplyToDanmaku(string user, string text)
+    /// <summary>
+    /// 直播弹幕：让鲸鱼娘回一句（不回也行，模型不可用时直接跳过）。
+    /// </summary>
+    /// <param name="onSpoken">
+    /// 真把这句话打到气泡之后回调，参数是实际说的那句。DanmakuBridge 用它记「谁问了什么、她怎么答的」；
+    /// 模型超时/没回，或被后一条弹幕顶掉 → 不回调，上下文里就不会留下没答过的问题。
+    /// </param>
+    public static void ReplyToDanmaku(string user, string text, Action<string>? onSpoken = null)
     {
         EnsureLoaded();
         if (!_enabled || string.IsNullOrEmpty(_apiKey)) return;
@@ -100,6 +114,8 @@ public static class WhaleBrain
             _pendingKind = "danmaku";
             _pendingText = $"{user}：{text}";
             _pendingFallback = "";
+            _pendingFacts = null;                // 弹幕不继承上一条选牌的牌面事实
+            _pendingCallback = onSpoken;
         }
         StartWorker();
         TrySignal();
@@ -160,13 +176,18 @@ public static class WhaleBrain
                 var since = System.Environment.TickCount64 - _lastCallAt;
                 if (since < _minGapMs) await Task.Delay((int)(_minGapMs - since)).ConfigureAwait(false);
 
-                string kind, text, fallback;
+                string kind, text, fallback, facts;
+                Action<string>? callback;
                 lock (Gate)
                 {
                     kind = _pendingKind;
                     text = _pendingText;
                     fallback = _pendingFallback;
+                    facts = _pendingFacts;
+                    callback = _pendingCallback;
                     _pendingText = null;
+                    _pendingFacts = null;
+                    _pendingCallback = null;
                 }
                 if (string.IsNullOrEmpty(text)) continue;
 
@@ -174,7 +195,7 @@ public static class WhaleBrain
                 _lastCallAt = System.Environment.TickCount64;
 
                 string line = null;
-                try { line = await AskAsync(kind, text).ConfigureAwait(false); }
+                try { line = await AskAsync(kind, text, facts).ConfigureAwait(false); }
                 catch (Exception e) { BridgeLog.Warn("whale brain: " + e.Message); }
 
                 if (string.IsNullOrWhiteSpace(line))
@@ -187,12 +208,22 @@ public static class WhaleBrain
                 lock (History)
                 {
                     History.Add(line);
-                    if (History.Count > 6) History.RemoveAt(0);
+                    if (History.Count > 4) History.RemoveAt(0);   // 只留 4 句，够接上话就行
                 }
 
                 // 只要一句：模型就算写了多句/多行，也只取第一句（用户要求：一次一句或不说）
                 var single = FirstSentence(line);
-                if (!string.IsNullOrEmpty(single)) DeferredSay(single, 12000);
+                if (!string.IsNullOrEmpty(single))
+                {
+                    DeferredSay(single, 12000);
+
+                    // 弹幕：说出口之后才记这一轮，给下一轮当上下文。
+                    if (callback is not null)
+                    {
+                        try { callback(single); }
+                        catch (Exception e) { BridgeLog.Warn("whale brain callback: " + e.Message); }
+                    }
+                }
             }
             catch (Exception e)
             {
@@ -201,7 +232,7 @@ public static class WhaleBrain
         }
     }
 
-    private static async Task<string> AskAsync(string kind, string text)
+    private static async Task<string> AskAsync(string kind, string text, string? facts)
     {
         var user = new StringBuilder();
 
@@ -213,12 +244,44 @@ public static class WhaleBrain
         }
         catch { }
 
-        lock (History)
+        // 弹幕回复也带「最近」：RunMemory.Digest 正常情况下已经包含【最近】；
+        // 不在局内/刚开局或记忆还没热时它可能是空的，这里用最近事件补一段，保证弹幕上下文里一定有。
+        if (kind == "danmaku" && !RunMemoryDigest.Contains("【最近】", StringComparison.Ordinal))
         {
-            if (History.Count > 0) user.Append("你刚说过：").Append(string.Join(" / ", History)).Append('\n');
+            try
+            {
+                var recent = Sts2AgentBridge.RunMemory.RecentEventsText();
+                if (!string.IsNullOrEmpty(recent)) user.Append(recent);
+            }
+            catch { }
         }
-        if (!string.IsNullOrEmpty(RunMemoryDigest))
-            BridgeLog.Info($"[brain] 带本局记忆 {RunMemoryDigest.Length} 字 / {kind}");
+
+        // 上下文按场景只带一份，别叠着发：
+        //   弹幕 → 最近三轮问答（谁问的、问什么、她怎么答的），塞在同一条 user 里；
+        //          还没有问答时退回「你刚说过」，让她先接得上自己的话。
+        //   其他 → 最近说过的话，免得重复。
+        var chatContext = kind == "danmaku" ? DanmakuContext() : "";
+        if (chatContext.Length > 0)
+        {
+            user.Append(chatContext);
+        }
+        else
+        {
+            lock (History)
+            {
+                if (History.Count > 0) user.Append("你刚说过：").Append(string.Join(" / ", History)).Append('\n');
+            }
+        }
+        if (!string.IsNullOrEmpty(RunMemoryDigest) || chatContext.Length > 0)
+            BridgeLog.Info($"[brain] 上下文：记忆 {RunMemoryDigest.Length} 字 / 弹幕 {chatContext.Length} 字 / {kind}");
+
+        // 牌面事实紧挨着决定放：模型看不见牌，费用只能靠我们给。
+        // 角色卡要求「理由里带数字」，没有事实它就会编一个 —— 这里给真值，正文里也带一遍。
+        if (!string.IsNullOrWhiteSpace(facts))
+        {
+            user.Append(facts).Append('\n');
+            BridgeLog.Info($"[brain] 牌面事实：{facts}");
+        }
 
         // 这里**只放事实和上下文**：说什么、说多长、什么口吻，全部由角色卡决定。
         // 代码不掺和风格，免得角色卡写一套、代码又盖一套。
@@ -261,6 +324,13 @@ public static class WhaleBrain
                 $"把 llm.json 的 maxTokens 调大（现在 {_maxTokens}）。");
         }
         return Cleanup(content);
+    }
+
+    /// <summary>弹幕上下文由 DanmakuBridge 维护（最近三轮问答）；那边出任何问题都不该拖垮这次回复。</summary>
+    private static string DanmakuContext()
+    {
+        try { return DanmakuBridge.RecentContext() ?? ""; }
+        catch (Exception e) { BridgeLog.Warn("danmaku context: " + e.Message); return ""; }
     }
 
     private static string Cleanup(string line)

@@ -59,6 +59,9 @@ public static class WhaleEntry
             try { BridgeLog.Warn("leave-shop hook failed: " + e.Message); } catch { }
         }
 
+        // 失败曲：角色死亡由 RitsuLib 的战斗结束事件触发，不轮询
+        try { LossSong.Install(); } catch (Exception e) { try { BridgeLog.Warn("fanfare install failed: " + e.Message); } catch { } }
+
         try
         {
             BridgeBootstrap.Start();

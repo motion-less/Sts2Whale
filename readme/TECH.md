@@ -121,6 +121,14 @@ Sts2Whale/
 - **LLM 嘴**：`WhaleBrain` —— `persona.md` 当 system，决定原文当 user，回一句给 `WhaleUi.Say`。
   **代码不规定说话风格**（长度、句式、口吻都在角色卡里），提示词里只有事实：
   本局摘要、刚说过的话、这次是什么事件。
+- **牌面**：选牌时在决定前面带一行
+  `上勾拳：2 费 · 攻击牌 · 罕见 · '造成 13 点伤害，抽 1 张牌。'`。
+  模型看不见牌，不给的话就会按牌名猜费用（角色卡又要求带数字）；数据来自
+  `DecisionOption.Card`（`SnapshotReader.ReadCard`）在决策那一刻的快照，
+  含 X 费/星费，效果文本去 BBCode、压成一行（≤60 字）。
+- **气泡第二行**：`WhaleUi.SetStatus(text)` 只显示、不念。求解器搜索时由 `AutoLoop` 每 0.3 秒
+  把 `SolverController.CurrentProjectedLossText()`（`预计战损 4 HP`，只剩阵亡路线时是 `未找到生还路线`）填进去，搜索结束 `ClearStatus()`；
+  路线还没算到战斗结束时留空。
 - **皮套**：`WhaleAvatar` 订阅 `EventFeed.Publish` + 三个 Harmony 补丁 + `WhaleUi.Say`，
   翻译成 VTS 的表情/口型/整模旋转。它**不调用任何 LLM**，只说已经生成好的台词。
 
@@ -179,6 +187,10 @@ upgrade / remove / transform / simple / discard / exhaust / bundle / potion / di
   首次只建基线，不重播页面里已有的内容。
 - **限流**：滚动 60 秒最多 N 条（默认 3）；同一句 5 分钟内不重复回；纯符号/表情跳过。
 - **选谁回**：带问号 +5 分，含「鲸鱼/爬塔/主播/你好/为什么…」+3 分，长度 4~24 +1 分。
+- **上下文**：记住最近 3 轮「谁问了什么 → 她怎么答的」，拼成 3 行塞进**同一条 user 消息**
+  （整段硬上限 240 字，约 60~150 token），不另开 assistant 轮次、不重复 system。
+  这一轮在她**真说出话之后**才记：超时、被新弹幕顶掉的那条不会留下「没答的问题」。
+  弹幕场景不再重复带「你刚说过」（内容已经在问答里）；`/danmaku` 的 `recentContext` 可看这份上下文。
 - **换房间**：重置基线、换目标页，不用重启游戏。
 - 排查：`/danmaku` 的 `pageUrl` 是实际读到的页面，`lastError` 区分
   「没找到浏览器」「浏览器开着但没有这个页面」「连不上调试端口」。
@@ -200,7 +212,25 @@ upgrade / remove / transform / simple / discard / exhaust / bundle / potion / di
 - **新鲜度校验**：5 秒内没读到实时状态就不注入（避免把上一局的数字喂给模型）
 - 调试：`curl -s 127.0.0.1:47821/memory`
 
-## 6.7 语音链路
+## 6.7 连胜 HUD（右上角）
+
+`src/bridge/StreakHud.cs`：一块常驻的小面板，每个职业一行「当前连胜 / 最高连胜」。
+
+```
+存档进度 SaveManager.Instance.Progress.CharacterStats
+  ← CurrentWinStreak / BestWinStreak（和游戏统计页同源，结算完立刻是新值）
+  ← ModelDb.AllCharacters（只取 IsPlayable，模组角色也会出现）
+  ← 每 10 秒读一次 → Label（右上角，游戏顶部栏按钮正下方）
+```
+
+- **读的是内存里的存档进度，不解析 `progress.save`**：不用管 modded / 原版两套存档目录，也不怕文件写到一半
+- **位置跟着游戏自己走**：`NRun.Instance.GlobalUi.TopBar.Pause`（右上角那颗齿轮）→
+  `GetGlobalTransformWithCanvas()` 换算成视口矩形 → 面板右对齐贴在它下面
+- **什么时候不显示**：主菜单 / 读档（没有 TopBar）、菜单或牌组浮层压上来（`NOverlayStack.ScreenCount > 0`）
+- **顺序**：铁甲战士 → 静默猎手 → 故障机器人 → 储君 → 亡灵契约师，模组角色按 id 排在后面
+- 调试：`curl -s 127.0.0.1:47821/streak`（`text` / `visible` / `anchorRect` / `panelRect`）
+
+## 6.8 语音链路
 
 ```
 WhaleUi.Say → WhaleAvatar.OnSpeech → SpeechPlayer.Speak
@@ -336,7 +366,7 @@ curl -s 127.0.0.1:48765/health                    # TTS daemon（requests 递增
 curl -s "127.0.0.1:47821/avatar/test?emotion=attack"
 curl -s "127.0.0.1:47821/avatar/hit?damage=40"
 curl -X POST 127.0.0.1:47821/quit                 # 存档并退出游戏
-tail -f ~/Library/Application\ Support/SlayTheSpire2/logs/agent_bridge.log
+tail -f ~/Library/Application\ Support/SlayTheSpire2/logs/agent_bridge.log   # 8 MB 轮转，历史 .1/.2
 ```
 
 端口速查：

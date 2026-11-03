@@ -82,6 +82,19 @@ internal sealed record SolverOverlaySnapshot(
         int startTurnNumber)
         => (lostSoFar + lossByTurn.Where(item => item.Key >= startTurnNumber).Sum(item => item.Value),
             recoveredSoFar + recoveredByTurn.Where(item => item.Key >= startTurnNumber).Sum(item => item.Value));
+    /// <summary>
+    /// 「当前路线摘要」的一句话版（给鲸鱼气泡第二行用）：
+    /// 正常是 <c>预计战损 4 HP</c>；只剩阵亡路线时是 <c>未找到生还路线</c>（和浮层同一句）；
+    /// 路线还没算到能结束战斗时返回空串——宁可不显示，也不写「未知」占着第二行。
+    /// </summary>
+    internal static string ProjectedLossText(SolverOverlaySnapshot snapshot)
+    {
+        if (snapshot == null) return "";
+        if (snapshot.OnlyDeathRoutesFound) return SolverText.Get("未找到生还路线");
+        if (!snapshot.ProjectedBattleHpLossKnown) return "";
+        return $"预计战损 {snapshot.ProjectedBattleHpLost} HP";
+    }
+
     public string? RewardOutcomeText { get; init; }
     public string? UsedPotionOutcomeText { get; init; }
     public string? PlannedPotionOutcomeText { get; init; }

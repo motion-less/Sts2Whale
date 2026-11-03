@@ -16,12 +16,15 @@ public static class WhaleUi
     private const int CharsPerLine = 40;      // 超过 40 个字就换行（不再截断）
     // 40 个字一行的基准宽度（实际宽度会按字号和字数再算）
     private const float BubbleWidth = CharsPerLine * FontSize + 36f;
+    private const int StatusCharsPerLine = 40;  // 和第一行同样的折行宽度
     public const int DefaultDurationMs = 15000;
 
     private static CanvasLayer _layer;
     private static Control _root;
     private static PanelContainer _bubble;
     private static Label _label;
+    private static Label _status;
+    private static string _statusText = "";
     private static Vector2 _bubbleNorm = new(-1, -1); // 归一化位置，-1 = 还没设置过
     private static bool _dragging;
     private static Vector2 _grabLocal;
@@ -116,7 +119,26 @@ public static class WhaleUi
         // 黑色描边：亮场景下也能看清
         label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 1f));
         label.AddThemeConstantOverride("outline_size", 8);
-        panel.AddChild(label);
+
+        // 第二行：不参与说话/语音，只当状态条（求解器路线摘要之类）
+        var box = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        box.AddThemeConstantOverride("separation", 2);
+        box.AddChild(label);
+        _status = new Label
+        {
+            Name = "WhaleStatus",
+            AutowrapMode = TextServer.AutowrapMode.Off,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            Visible = false,
+        };
+        _status.AddThemeFontSizeOverride("font_size", 24);
+        _status.AddThemeColorOverride("font_color", new Color(0.92f, 0.95f, 1f, 0.95f));
+        _status.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.95f));
+        _status.AddThemeConstantOverride("outline_size", 6);
+        box.AddChild(_status);
+        panel.AddChild(box);
         return panel;
     }
 
@@ -132,8 +154,12 @@ public static class WhaleUi
             _lastText = text ?? "";
             try { Sts2Whale.Whale.WhaleAvatar.OnSpeech(_lastText, durationMs, source); } catch { }
 
+            ClearStatusText();
             _label.Text = Wrap(_lastText, CharsPerLine);
-            _label.AddThemeFontSizeOverride("font_size", FontSizeFor(_lastText, ViewportSize().X));
+            var fontSize = FontSizeFor(_lastText, ViewportSize().X);
+            _label.AddThemeFontSizeOverride("font_size", fontSize);
+            if (_status != null && GodotObject.IsInstanceValid(_status))
+                _status.AddThemeFontSizeOverride("font_size", fontSize);
             _bubble.Visible = true;
             _bubble.ResetSize();
             Reposition();
@@ -153,6 +179,52 @@ public static class WhaleUi
         }
     }
 
+    // ---------------------------------------------------------------- 第二行
+
+    /// <summary>
+    /// 气泡第二行：只显示、不念（不触发 <c>WhaleAvatar.OnSpeech</c>），空串就收起。
+    /// 用来挂求解器正在算的路线摘要这类实时状态。
+    /// </summary>
+    public static void SetStatus(string text)
+    {
+        try
+        {
+            Install();
+            if (!IsReady || _status == null) return;
+
+            var clean = string.IsNullOrWhiteSpace(text) ? "" : text.Trim();
+            if (clean == _statusText) return;
+            _statusText = clean;
+            _status.Text = clean.Length == 0 ? "" : Wrap(clean, StatusCharsPerLine);
+            _status.AddThemeFontSizeOverride("font_size", FontSizeFor(_lastText, ViewportSize().X));
+            _status.Visible = clean.Length > 0;
+            _bubble.Visible = true;
+            _bubble.ResetSize();
+            Reposition();
+
+            // 主行 0.9 秒才刷新一次；状态还在就续一口气，别因为主行没变整块消失
+            var until = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 1500;
+            if (until > _hideAt) _hideAt = until;
+        }
+        catch (Exception e)
+        {
+            BridgeLog.Warn("whale status failed: " + e.Message);
+        }
+    }
+
+    public static void ClearStatus() => SetStatus("");
+
+    private static void ClearStatusText()
+    {
+        if (_statusText.Length == 0) return;
+        _statusText = "";
+        if (_status != null && GodotObject.IsInstanceValid(_status))
+        {
+            _status.Text = "";
+            _status.Visible = false;
+        }
+    }
+
     /// <summary>头像已经移除，保留接口只为兼容旧调用。</summary>
     public static Dictionary<string, object> Reload()
         => Fail("头像已移除（现在只有可拖拽的气泡）");
@@ -169,9 +241,18 @@ public static class WhaleUi
         _root.Size = size;
 
         var fontSize = FontSizeFor(_lastText, size.X);
-        var bubbleWidth = Math.Clamp(Math.Min(_lastText.Length, CharsPerLine) * fontSize + 36f, 180f, size.X - 40f);
+        float mainWidth = Math.Min(Math.Max(1, _lastText.Length), CharsPerLine) * fontSize + 36f;
+        float statusWidth = string.IsNullOrEmpty(_statusText)
+            ? 0f
+            : Math.Min(Math.Max(1, _statusText.Length), StatusCharsPerLine) * fontSize + 36f;
+        var bubbleWidth = Math.Clamp(Math.Max(mainWidth, statusWidth), 180f, size.X - 40f);
         var lines = Math.Max(1, (int)Math.Ceiling(_lastText.Length / (float)CharsPerLine));
-        var bubbleHeight = fontSize * 1.35f * lines + 24f;
+        var statusLines = string.IsNullOrEmpty(_statusText)
+            ? 0
+            : Math.Max(1, (int)Math.Ceiling(_statusText.Length / (float)StatusCharsPerLine));
+        var bubbleHeight = fontSize * 1.35f * (lines + statusLines)
+            + 24f
+            + (statusLines > 0 ? 6f : 0f);
 
         Vector2 pos;
         if (_bubbleNorm.X >= 0)
@@ -323,6 +404,7 @@ public static class WhaleUi
     {
         try
         {
+            ClearStatusText();
             if (_bubble != null && GodotObject.IsInstanceValid(_bubble)) _bubble.Visible = false;
             _hideAt = 0;
             return new Dictionary<string, object> { ["ok"] = true, ["hidden"] = true };
@@ -339,6 +421,7 @@ public static class WhaleUi
         ["installed"] = IsReady,
         ["visible"] = _bubble != null && GodotObject.IsInstanceValid(_bubble) && _bubble.Visible,
         ["text"] = _lastText,
+        ["status"] = _statusText,
         ["viewport"] = new[] { ViewportSize().X, ViewportSize().Y },
         ["dragging"] = _dragging,
         ["position"] = _bubble != null && GodotObject.IsInstanceValid(_bubble)

@@ -58,6 +58,22 @@ public static class DanmakuBridge
     private static readonly Queue<long> ReplyTimes = new();
     private static readonly Dictionary<string, long> RepliedTexts = new(StringComparer.Ordinal);
 
+    /// <summary>最近几轮「谁问的 → 她怎么答的」。只在内存里，不落盘。</summary>
+    private sealed class Exchange
+    {
+        public string User = "";
+        public string Question = "";
+        public string Reply = "";
+    }
+
+    private const int ContextPairs = 3;          // 只留最近 3 轮问答
+    private const int ContextBudgetChars = 240;  // 整段硬上限（超了从最旧的丢）
+    private const int ContextUserChars = 16;
+    private const int ContextQuestionChars = 40;
+    private const int ContextReplyChars = 40;
+
+    private static readonly List<Exchange> RecentExchanges = new();
+
     private static Thread? _thread;
     private static bool _enabled;
     private static bool _running;
@@ -288,7 +304,10 @@ public static class DanmakuBridge
         _sent++;
         _lastReply = $"{best.user}: {best.text}";
         BridgeLog.Info($"[danmaku] 回 @{best.user}：{best.text}");
-        WhaleBrain.ReplyToDanmaku(best.user, best.text);
+        // 回调只在真说出话之后才记这一轮：模型没回、或被后一条弹幕顶掉的那条不记，
+        // 免得下一轮上下文里留下一堆「有人问过、她没答」的问题。
+        WhaleBrain.ReplyToDanmaku(best.user, best.text,
+            reply => RememberExchange(best.user, best.text, reply));
     }
 
     private static bool CanReply()
@@ -312,6 +331,62 @@ public static class DanmakuBridge
         return score;
     }
 
+    // ------------------------------------------------------------------ 上下文
+
+    /// <summary>记一轮真的说出口的问答（由 WhaleBrain 在气泡发出后回调）。</summary>
+    public static void RememberExchange(string user, string question, string reply)
+    {
+        if (string.IsNullOrWhiteSpace(question) || string.IsNullOrWhiteSpace(reply)) return;
+        lock (RecentExchanges)
+        {
+            RecentExchanges.Add(new Exchange
+            {
+                User = (user ?? "").Trim(),
+                Question = question.Trim(),
+                Reply = reply.Trim(),
+            });
+            if (RecentExchanges.Count > ContextPairs) RecentExchanges.RemoveAt(0);
+        }
+    }
+
+    /// <summary>
+    /// 给模型看的一小段上下文：最近三轮，每轮一行「谁：问什么 → 你：怎么答的」。
+    ///
+    /// 省 token 的三个做法：
+    ///   1. 拼进**同一条 user 消息**，不另开 assistant 轮次 —— 不用多背 role 包装；
+    ///   2. 固定 3 轮 + 每段截断 + 整段字数上限，不会随直播时长膨胀；
+    ///   3. 没有问答（刚开播 / 模型没 key）就返回空串，调用方一个字都不多带。
+    /// </summary>
+    public static string RecentContext()
+    {
+        lock (RecentExchanges)
+        {
+            if (RecentExchanges.Count == 0) return "";
+
+            var lines = new List<string>();
+            var used = 0;
+            for (var i = RecentExchanges.Count - 1; i >= 0; i--)   // 从新往旧装，超预算先丢最旧的
+            {
+                var e = RecentExchanges[i];
+                var line = $"- {Clip(e.User, ContextUserChars)}：{Clip(e.Question, ContextQuestionChars)}" +
+                           $" → 你：{Clip(e.Reply, ContextReplyChars)}";
+                if (lines.Count > 0 && used + line.Length > ContextBudgetChars) break;
+                lines.Add(line);
+                used += line.Length + 1;
+            }
+            lines.Reverse();
+            return "【最近弹幕】\n" + string.Join("\n", lines) + "\n";
+        }
+    }
+
+    /// <summary>单段截断：换行压成空格（模型按行理解上下文，别让一条弹幕拆成两行），超长截断加省略号。</summary>
+    private static string Clip(string s, int max)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        s = s.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return s.Length <= max ? s : s.Substring(0, max) + "…";
+    }
+
     // ------------------------------------------------------------------ 状态
 
     public static Dictionary<string, object> Snapshot()
@@ -332,6 +407,7 @@ public static class DanmakuBridge
             ["maxPerMinute"] = _maxPerMinute,
             ["lastMessage"] = _lastMsg,
             ["lastReply"] = _lastReply,
+            ["recentContext"] = RecentContext(),
             ["lastError"] = _lastError,
         };
     }

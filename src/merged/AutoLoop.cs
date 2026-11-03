@@ -67,9 +67,17 @@ public static class AutoLoop
                         _worldlineLast = progress;
                         try { WhaleUi.Say(progress, 900, countsAsReason: false); } catch { }
                     }
+                    // 第二行：求解器当前考虑的那条路线（「当前路线摘要」那块的文字版）
+                    try { WhaleUi.SetStatus(SolverBridge.ProjectedLoss()); } catch { }
                 }
             }
-            else { _worldlineNextAt = 0; _worldlineLast = null; _worldlineMax = 0; }
+            else
+            {
+                _worldlineNextAt = 0;
+                _worldlineLast = null;
+                _worldlineMax = 0;
+                if (WhaleUi.BubbleVisible) try { WhaleUi.ClearStatus(); } catch { }
+            }
 
             // 投子认负：求解器刚因为「预计本回合死亡」交还了操作权
             if (!RunOver() && SolverBridge.DeathPredicted && !_lastStandDone)

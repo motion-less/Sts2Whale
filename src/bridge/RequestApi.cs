@@ -886,6 +886,10 @@ public static partial class RequestApi
             BridgeLog.Warn("selector: enumerate cards failed: " + e.Message);
         }
 
+        // 选牌界面有时不是以浮层形式出现（房间/浮层数都不变），用事件直接让 EventFeed 立刻扫一次，
+        // 别等 2 秒兜底。
+        try { EventFeed.RequestScan(); } catch { }
+
         if (models.Count == 0)
             return Task.FromResult<IEnumerable<CardModel>>(Array.Empty<CardModel>());
 

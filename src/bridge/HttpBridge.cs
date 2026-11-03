@@ -561,6 +561,10 @@ public static class HttpBridge
                 case "/danmaku":
                     return (200, Json(DanmakuBridge.Snapshot()));
 
+                // 右上角连胜面板：文字 / 是否显示 / 贴在哪个按钮下面（排障用）
+                case "/streak":
+                    return (200, Json(await BridgePump.OnMain(StreakHud.Snapshot)));
+
                 case "/avatar/state":
                     return (200, Json(Sts2Whale.Whale.WhaleAvatar.State()));
 
@@ -585,6 +589,10 @@ public static class HttpBridge
                 case "/event/advance":
                     if (SolverDriving()) return (200, Json(SolverDenied("POST /event/advance")));
                     return (200, Json(await BridgePump.OnMain(UiClicks.ClickLongestText)));
+
+                // 求解器内存快照（debug）：进程占用 / 物理总量 / 系统可用
+                case "/solver/memory":
+                    return (200, Json(await BridgePump.OnMain(SolverBridge.MemorySnapshot)));
 
                 // 求解器实时世界线进度（debug）
                 case "/solver/worldlines":

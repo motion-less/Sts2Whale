@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Saves;
 using STS2RitsuLib;
 using STS2RitsuLib.Data;
 using STS2RitsuLib.Utils.Persistence;
@@ -46,12 +47,10 @@ public static class RunMemory
     private static int _totalFloor;
     private static string _room = "";
     private static int _hp, _maxHp, _gold, _deck, _relics;
-    private static string _recap = "";
     private static long _lastTickAt;
     private static long _lastSaveAt;
     private static bool _loaded;
     private static long _lastLiveAt;   // 最近一次真的读到对局状态的时间
-    private static int _lastActFloor;  // 上一幕的层数，用来检测换幕
 
     private sealed class Entry
     {
@@ -109,15 +108,6 @@ public static class RunMemory
 
             _character = character;
             _ascension = asc;
-            // 换幕（ActFloor 从大变小）→ 用最近几条事件拼一句「回顾」，不额外调模型
-            if (_lastActFloor > 0 && s.ActFloor > 0 && s.ActFloor < _lastActFloor)
-            {
-                List<Entry> tail;
-                lock (Gate) tail = Events.Skip(Math.Max(0, Events.Count - 6)).ToList();
-                if (tail.Count > 0)
-                    _recap = "上一幕：" + string.Join(" / ", tail.Select(e => $"{TranslateKind(e.Kind)}{e.Text}"));
-            }
-            _lastActFloor = s.ActFloor > 0 ? s.ActFloor : _lastActFloor;
             _act = s.ActFloor > 0 ? s.ActFloor : _act;
             _actFloor = s.ActFloor;
             _totalFloor = s.TotalFloor;
@@ -185,21 +175,59 @@ public static class RunMemory
             $"金币 {_gold}",
             $"卡组 {_deck} 张",
             $"遗物 {_relics} 件",
+            StreakText(),
         }.Where(x => !string.IsNullOrEmpty(x));
 
         sb.Append("【本局】").Append(string.Join(" · ", parts)).Append('\n');
 
-        List<Entry> recent;
-        lock (Gate) recent = Events.Skip(Math.Max(0, Events.Count - DigestEvents)).ToList();
-        if (recent.Count > 0)
-        {
-            sb.Append("【最近】").Append(string.Join(" / ",
-                recent.Select(e => $"{TranslateKind(e.Kind)}：{e.Text}"))).Append('\n');
-        }
-
-        if (!string.IsNullOrEmpty(_recap)) sb.Append("【回顾】").Append(_recap).Append('\n');
+        var recentText = RecentEventsText();
+        if (recentText.Length > 0) sb.Append(recentText);
 
         return sb.ToString();
+    }
+
+    /// <summary>当前角色的「当前连胜 / 最大连胜」，读存档进度里同一份 CharacterStats。</summary>
+    private static string StreakText()
+    {
+        try
+        {
+            var progress = SaveManager.Instance?.Progress;
+            if (progress?.CharacterStats == null) return "";
+            var wanted = NormalizeCharacterId(_character);
+            foreach (var pair in progress.CharacterStats)
+            {
+                if (pair.Key == null || pair.Value == null) continue;
+                if (!string.Equals(NormalizeCharacterId(pair.Key.Entry), wanted, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return $"当前连胜 {pair.Value.CurrentWinStreak} · 最大连胜 {pair.Value.BestWinStreak}";
+            }
+        }
+        catch
+        {
+            // 存档还没加载好就少这一项，别影响本局摘要
+        }
+        return "";
+    }
+
+    private static string NormalizeCharacterId(string id)
+    {
+        var raw = (id ?? "").Trim();
+        if (raw.StartsWith("CHARACTER.", StringComparison.OrdinalIgnoreCase))
+            raw = raw["CHARACTER.".Length..];
+        return raw;
+    }
+
+    /// <summary>
+    /// 最近几条本局事件（`【最近】…`）。和 <see cref="Digest"/> 里的同一段，
+    /// 单独的入口给弹幕回复用：不在局内 / 刚开局、Digest 为空时也能补上「最近」。
+    /// </summary>
+    public static string RecentEventsText()
+    {
+        List<Entry> recent;
+        lock (Gate) recent = Events.Skip(Math.Max(0, Events.Count - DigestEvents)).ToList();
+        if (recent.Count == 0) return "";
+        return "【最近】" + string.Join(" / ",
+            recent.Select(e => $"{TranslateKind(e.Kind)}：{e.Text}")) + "\n";
     }
 
     public static Dictionary<string, object> Snapshot()
@@ -220,20 +248,16 @@ public static class RunMemory
             ["gold"] = _gold,
             ["deck"] = _deck,
             ["relics"] = _relics,
-            ["recap"] = _recap,
             ["events"] = recent.Select(e => new { t = e.At, kind = e.Kind, text = e.Text }).ToList<object>(),
             ["digest"] = Digest(),
         };
     }
-
-    public static void SetRecap(string recap) => _recap = (recap ?? "").Trim();
 
     // ------------------------------------------------------------------ 存取
 
     private static void ResetInternal(string key, string character, int asc)
     {
         lock (Gate) Events.Clear();
-        _recap = "";
         _runKey = key;
         _character = character;
         _ascension = asc;
@@ -248,7 +272,6 @@ public static class RunMemory
         public int Ascension { get; set; }
         public int ActFloor { get; set; }
         public int TotalFloor { get; set; }
-        public int LastActFloor { get; set; }
         public string Room { get; set; } = "";
         public int Hp { get; set; }
         public int MaxHp { get; set; }
@@ -256,7 +279,6 @@ public static class RunMemory
         public int Deck { get; set; }
         public int Relics { get; set; }
         public long LastLiveAt { get; set; }
-        public string Recap { get; set; } = "";
         public List<Entry> Events { get; set; } = new();
     }
 
@@ -275,7 +297,6 @@ public static class RunMemory
                 s.Ascension = _ascension;
                 s.ActFloor = _actFloor;
                 s.TotalFloor = _totalFloor;
-                s.LastActFloor = _lastActFloor;
                 s.Room = _room;
                 s.Hp = _hp;
                 s.MaxHp = _maxHp;
@@ -283,7 +304,6 @@ public static class RunMemory
                 s.Deck = _deck;
                 s.Relics = _relics;
                 s.LastLiveAt = _lastLiveAt;
-                s.Recap = _recap;
                 s.Events = snapshot;
             });
             _store.Save(StoreKey);
@@ -337,7 +357,6 @@ public static class RunMemory
         _ascension = s.Ascension;
         _actFloor = s.ActFloor;
         _totalFloor = s.TotalFloor;
-        _lastActFloor = s.LastActFloor;
         _room = s.Room ?? "";
         _hp = s.Hp;
         _maxHp = s.MaxHp;
@@ -345,7 +364,6 @@ public static class RunMemory
         _deck = s.Deck;
         _relics = s.Relics;
         _lastLiveAt = s.LastLiveAt;
-        _recap = s.Recap ?? "";
 
         lock (Gate)
         {
@@ -367,7 +385,6 @@ public static class RunMemory
             Ascension = root.TryGetProperty("ascension", out var a) && a.TryGetInt32(out var av) ? av : 0,
             ActFloor = root.TryGetProperty("actFloor", out var af) && af.TryGetInt32(out var afv) ? afv : 0,
             TotalFloor = root.TryGetProperty("totalFloor", out var f) && f.TryGetInt32(out var fv) ? fv : 0,
-            Recap = root.TryGetProperty("recap", out var r) ? r.GetString() ?? "" : "",
         };
 
         if (root.TryGetProperty("events", out var evs) && evs.ValueKind == JsonValueKind.Array)

@@ -43,6 +43,7 @@ cp "$DLL" "$PKG/Sts2Whale.dll"
 cp "$HERE/Sts2Whale.json" "$HERE/persona.md" "$HERE/llm.json" "$HERE/vts.json" "$HERE/live.json" \
    "$HERE/install.sh" "$HERE/LICENSE-CombatSolver-MIT.txt" "$HERE/README.md" "$HERE/CHANGELOG.md" "$PKG/"
 cp "$HERE"/readme/*.md "$PKG/readme/"
+if [ -d "$HERE/assets" ]; then cp -R "$HERE/assets" "$PKG/assets"; fi
 cp "$HERE/tools/tts_daemon.py" "$PKG/"
 chmod 600 "$PKG/llm.json"
 

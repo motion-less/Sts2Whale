@@ -29,24 +29,65 @@ internal static class RuntimeGcStartup
             Entry.Logger.Warn("[CombatSolver] RUNTIME_GC_STARTUP failed: game startup path is unavailable.");
             return;
         }
-        string relative = Path.GetRelativePath(executableDirectory, assemblyPath);
-        if (Path.IsPathRooted(relative)
-            || relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        if (Path.GetDirectoryName(Path.GetFullPath(assemblyPath)) is not { Length: > 0 } assemblyDirectory
+            || !IsAssemblyInsideGameInstall(executableDirectory, assemblyDirectory))
         {
             Status = "Failed";
-            Entry.Logger.Warn("[CombatSolver] RUNTIME_GC_STARTUP failed: game assembly is outside the executable directory.");
+            Entry.Logger.Warn(
+                "[CombatSolver] RUNTIME_GC_STARTUP failed: game assembly is outside the game install directory " +
+                $"(exe_dir={Path.GetFullPath(executableDirectory)}, assembly={Path.GetFullPath(assemblyPath)}).");
             return;
         }
         string path = Path.ChangeExtension(assemblyPath, ".runtimeconfig.json");
         try
         {
             Status = RuntimeGcStartupConfig.Apply(path, enabled);
-            Entry.Logger.Info($"[CombatSolver] RUNTIME_GC_STARTUP status={Status} next_launch_enabled={enabled}");
+            Entry.Logger.Info(
+                $"[CombatSolver] RUNTIME_GC_STARTUP status={Status} next_launch_enabled={enabled} config={path}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
         {
             Status = "Failed";
             Entry.Logger.Warn($"[CombatSolver] RUNTIME_GC_STARTUP failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 程序集是否在「游戏安装目录」里（只有这种路径才允许改它的 runtimeconfig）。
+    ///
+    /// Windows / Linux：<c>sts2.dll</c> 在可执行文件旁边或它的子目录里。
+    /// macOS .app：可执行文件在 <c>Contents/MacOS</c>，程序集在 <c>Contents/Resources/data_…/</c>，
+    /// 两者是**兄弟目录**。旧实现看的是「相对可执行文件目录」是否以 <c>..</c> 开头，
+    /// macOS 上永远是 <c>../Resources/…</c>，于是 <c>autoConfigureServerGc</c> 一次都没生效
+    /// （日志：game assembly is outside the executable directory）。这里改成按安装根判断：
+    /// 普通布局用可执行文件目录，macOS .app 布局额外允许 <c>Contents/</c> 下的内容，其他位置仍然拒绝。
+    /// </summary>
+    internal static bool IsAssemblyInsideGameInstall(string executableDirectory, string assemblyDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(executableDirectory) || string.IsNullOrWhiteSpace(assemblyDirectory))
+            return false;
+
+        string exeDirectory = Path.GetFullPath(executableDirectory);
+        string asmDirectory = Path.GetFullPath(assemblyDirectory);
+        if (IsSameOrInside(asmDirectory, exeDirectory)) return true;
+
+        string installRoot = Path.GetDirectoryName(exeDirectory) ?? exeDirectory;
+        bool macAppBundle = OperatingSystem.IsMacOS()
+            && string.Equals(Path.GetFileName(exeDirectory), "MacOS", StringComparison.Ordinal)
+            && string.Equals(Path.GetFileName(installRoot), "Contents", StringComparison.Ordinal);
+        return macAppBundle && IsSameOrInside(asmDirectory, installRoot);
+    }
+
+    private static bool IsSameOrInside(string path, string root)
+    {
+        // macOS 默认文件系统不区分大小写；Windows 也是。Linux 保持区分。
+        StringComparison comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (string.Equals(path, root, comparison)) return true;
+        string prefix = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        return path.StartsWith(prefix, comparison);
     }
 }
