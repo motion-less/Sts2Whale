@@ -209,6 +209,8 @@ internal sealed partial class CombatBeamSolver
         bool timeBudgetReached = false;
         // 连续无进展的内存回收已用尽本搜索的额度：提前收手，交给既有终局发布当前前沿的最优路线。
         bool memoryNoProgressTruncated = false;
+        // 提交量触顶后是否已经试过回收（每次搜索只试一次，避免反复回收把时间预算烧光）。
+        bool committedBudgetReclaimAttempted = false;
         bool acceptableBattleHpLossReached = false;
 
         SolverInterimResult SummarizeCandidate(SearchNode node, bool won)
@@ -1211,6 +1213,63 @@ internal sealed partial class CombatBeamSolver
             return true;
         }
 
+        /// <summary>
+        /// 托管堆「已提交字节」触顶就收手。看提交量而不是活对象：活对象只有几百 MB 时，
+        /// ServerGC 仍会把提交堆顶到 GB 级（各代缓冲 + 碎片），而越线之后是系统级压缩换页，
+        /// 再怎么调 GC 都救不回来 —— 只能提前收敛，别让进程 footprint 继续涨。
+        /// 和 no-progress 走同一条收尾路径，所以扫描到的时间点不改变搜索语义。
+        ///
+        /// 先回收一次再判定：只回收不收敛，会让「堆已经涨过头」的机器在后续每次搜索开头
+        /// 立刻触顶，退化成永远浅搜。回收后真的压不下来，才收手。
+        /// </summary>
+        bool ObserveCommittedBudget(string reason, int playDepth)
+        {
+            long budget = policy.MemoryCommittedBudgetBytes;
+            if (budget <= 0)
+                return false;
+            GCMemoryInfo info = GC.GetGCMemoryInfo();
+            if (info.TotalCommittedBytes < budget)
+                return false;
+
+            if (!committedBudgetReclaimAttempted)
+            {
+                committedBudgetReclaimAttempted = true;
+                Entry.Logger.Info(
+                    $"[CombatSolver/Test] SEARCH_MEMORY_COMMITTED_BUDGET_RECLAIM " +
+                    $"reason={reason} committed={info.TotalCommittedBytes} budget={budget} " +
+                    $"heap={info.HeapSizeBytes} fragmented={info.FragmentedBytes}");
+                try
+                {
+                    policy.MemoryPressureSignal.ReclaimAndContinue(
+                        cancellationToken, "committed_budget");
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    // 回收失败不应该把搜索打断：下面照常按「压不下来」收手。
+                    Entry.Logger.Info(
+                        $"[CombatSolver/Test] SEARCH_MEMORY_COMMITTED_BUDGET_RECLAIM_FAILED " +
+                        $"exception={exception.GetType().Name}: {exception.Message}");
+                }
+                GCMemoryInfo afterReclaim = GC.GetGCMemoryInfo();
+                if (afterReclaim.TotalCommittedBytes < budget)
+                    return false;
+                info = afterReclaim;
+            }
+
+            memoryNoProgressTruncated = true;
+            Entry.Logger.Info(
+                $"[CombatSolver/Test] SEARCH_MEMORY_COMMITTED_BUDGET_STOP " +
+                $"reason={reason} committed={info.TotalCommittedBytes} budget={budget} " +
+                $"heap={info.HeapSizeBytes} fragmented={info.FragmentedBytes} " +
+                $"gen2={GC.CollectionCount(GC.MaxGeneration)} " +
+                $"expanded={_run.Expanded} turn_layer={searchedTurnLayers} play_depth={playDepth}");
+            return true;
+        }
+
         void ReclaimAtCommittedBoundary(
             string reason,
             int playDepth,
@@ -1527,6 +1586,9 @@ internal sealed partial class CombatBeamSolver
                  playDepth++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                // 每 8 层采样一次提交量；触顶只置标志，收尾仍走下面那条既有分支。
+                if ((playDepth & 7) == 0)
+                    ObserveCommittedBudget("play_depth", playDepth);
                 if (memoryNoProgressTruncated)
                 {
                     // 和时间预算同一条收尾路径：把当前前沿推进到回合末，再由既有终局发布；

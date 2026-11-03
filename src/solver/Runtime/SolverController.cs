@@ -575,6 +575,7 @@ internal static partial class SolverController
                 ?? SearchPolicySnapshot.DefaultTranspositionEntryLimit,
             MemoryNoProgressRecoveryLimit =
                 UnattendedTestRunner.MemoryNoProgressRecoveryLimitOverride,
+            MemoryCommittedBudgetBytes = ResolveMemoryCommittedBudgetBytes(),
             PortfolioExperiment = PortfolioSelectorRuntime.Capture(),
             Act3BossStrategy = UnattendedTestRunner.Act3BossStrategyOverride != false
                 && SearchPolicySnapshot.IsAct3BossEncounter(state.RunState.CurrentActIndex, state.Encounter?.Id.Entry),
@@ -618,6 +619,56 @@ internal static partial class SolverController
             ReconcilePersistedPotionDirectives(activeCombat);
         Entry.Logger.Info(
             $"[CombatSolver/Test] THEFT_POLICY_INIT policy={_combat.TheftPolicy?.ToString() ?? "-"}");
+    }
+
+    /// <summary>
+    /// 托管堆已提交字节的兜底上限：取「GC 认为可用的内存」的三分之一，夹在 1.5～5 GB 之间。
+    ///
+    /// 这条线不决定搜多少，只在堆已经大到会触发系统换页时把搜索收尾 —— 实测 16 GB 机器上
+    /// 提交量从 2.4 GB 一路爬到 8.9 GB 的那次，进程 footprint 摸到 13 GB，之后就一路黑屏。
+    /// 可用 <c>STS2_SOLVER_COMMITTED_BUDGET_MB</c> 覆盖（0 = 关闭），方便 A/B 与复现问题。
+    ///
+    /// 覆盖值有 1.5 GB 的下限：游戏自身（含 ServerGC 各代缓冲）的空载提交量实测就有 720 MB，
+    /// 把线画在这之下只会让每次搜索在 depth 0 立刻收敛，求解器等于被关掉。
+    /// </summary>
+    private static long ResolveMemoryCommittedBudgetBytes()
+    {
+        const long Mebibyte = 1024L * 1024;
+        const long Floor = 1536 * Mebibyte;
+        string? raw = System.Environment.GetEnvironmentVariable("STS2_SOLVER_COMMITTED_BUDGET_MB");
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            if (!long.TryParse(raw, out long configured) || configured < 0)
+            {
+                Entry.Logger.Warn(
+                    $"[CombatSolver/Test] MEMORY_COMMITTED_BUDGET invalid override='{raw}'，按默认值处理");
+            }
+            else if (configured == 0)
+            {
+                Entry.Logger.Info("[CombatSolver/Test] MEMORY_COMMITTED_BUDGET disabled source=env");
+                return 0;
+            }
+            else
+            {
+                long bytes = Math.Max(configured * Mebibyte, Floor);
+                Entry.Logger.Info(
+                    $"[CombatSolver/Test] MEMORY_COMMITTED_BUDGET source=env " +
+                    $"configured_mb={configured} effective_bytes={bytes}");
+                return bytes;
+            }
+        }
+
+        long available = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        if (available <= 0 || available == long.MaxValue)
+        {
+            Entry.Logger.Info("[CombatSolver/Test] MEMORY_COMMITTED_BUDGET disabled source=auto reason=unknown_memory_limit");
+            return 0;
+        }
+        long effective = Math.Clamp(available / 3, Floor, 5120 * Mebibyte);
+        Entry.Logger.Info(
+            $"[CombatSolver/Test] MEMORY_COMMITTED_BUDGET source=auto " +
+            $"available_bytes={available} effective_bytes={effective}");
+        return effective;
     }
 
     private static void RecordReviewedWorldlines(SolverResult result)

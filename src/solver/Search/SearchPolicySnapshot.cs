@@ -125,6 +125,19 @@ internal sealed record SearchPolicySnapshot(
     /// </summary>
     public int MemoryNoProgressRecoveryLimit { get; init; }
 
+    /// <summary>
+    /// 托管堆「已提交字节」的双保险上限（0 = 关闭）。
+    ///
+    /// 为什么不看活对象：实测一场 Boss 里活着的 <c>CombatPredictionSimulator</c> 只有约 4.9k 个
+    /// （合计约 120 MB），但 ServerGC 会把已提交堆顶到 GB 级（各代缓冲 + 碎片），而这个提交量
+    /// 才是进程 footprint 的真身 —— 一旦越过物理内存线，macOS 开始压缩换页，之后每次 GC、
+    /// 每次进房间都要把页读回来，表现就是十几秒黑屏。
+    ///
+    /// 触顶时走既有收尾路径（把前沿推进到回合末、交给既有终局发布），不中途砍分支；
+    /// 所以没触顶的机器上逐位不变，触顶的机器上把「卡死十几秒」换成「提前收敛」。
+    /// </summary>
+    public long MemoryCommittedBudgetBytes { get; init; }
+
     internal BeamPortfolioExperiment? PortfolioExperiment { get; init; }
 
     /// <summary>
