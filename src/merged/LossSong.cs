@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using Godot;
 using MegaCrit.Sts2.Core.Combat;
@@ -30,7 +31,11 @@ internal static class LossSong
     private static readonly string[] BaseNames = { "guanyu", "关羽之歌", "guan-yu", "guanyu_zhi_ge" };
     private static readonly string[] Extensions = { ".mp3", ".ogg", ".wav" };
 
+    private static readonly object Gate = new();
     private static AudioStreamPlayer? _player;
+    private static Process? _process;
+    private static string _externalPath = "";
+    private static long _lastExternalExitAt;
     private static Tween? _fade;
     private static bool _watching;
     private static bool _fading;
@@ -156,43 +161,20 @@ internal static class LossSong
     {
         try
         {
-            StopCurrent(keepWatch: true);
+            StopPlayback("switch");
             if (!_watching) return;
-            if (Engine.GetMainLoop() is not SceneTree tree || tree.Root == null) return;
-
-            var stream = LoadStream(path);
-            if (stream == null)
-            {
-                BridgeLog.Warn("[fanfare] 无法解码：" + path);
-                _watching = false;
-                return;
-            }
-
-            var player = new AudioStreamPlayer
-            {
-                Name = "WhaleLossSong",
-                Stream = stream,
-                VolumeDb = 0f,
-            };
-            // 角色死亡前一直循环：播完再来
-            player.Finished += () =>
-            {
-                try
-                {
-                    if (!_watching || _fading || !GodotObject.IsInstanceValid(player)) return;
-                    player.Play();
-                }
-                catch { }
-            };
-            tree.Root.AddChild(player);
-            player.Play();
-
-            _player = player;
             _fading = false;
-            if (_fade != null)
+
+            // macOS 走 afplay 子进程：解码和音频通道都不在游戏进程里，FMOD 那条
+            // 「Stop 通道时等全局临界区」的死锁路径就不存在了。
+            if (OperatingSystem.IsMacOS())
             {
-                try { _fade.Kill(); } catch { }
-                _fade = null;
+                _externalPath = path;
+                SpawnExternalPlayer();
+            }
+            else
+            {
+                StartGodotPlayer(path);
             }
             BridgeLog.Info($"[fanfare] 播放 {Path.GetFileName(path)}（循环，死亡后 {FadeSeconds:0}s 淡出）");
         }
@@ -201,6 +183,84 @@ internal static class LossSong
             _watching = false;
             BridgeLog.Warn("[fanfare] 播放失败: " + e.Message);
         }
+    }
+
+    private static void SpawnExternalPlayer()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_externalPath) || !File.Exists(_externalPath)) return;
+            var psi = new ProcessStartInfo("/usr/bin/afplay")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add(_externalPath);
+
+            var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            process.Exited += (_, _) =>
+            {
+                try { process.Dispose(); } catch { }
+                if (!_watching || _fading) return;
+                // 播完再来（循环）。解码失败时会立刻退出，用 300ms 闸门防空转。
+                long now = System.Environment.TickCount64;
+                if (now - _lastExternalExitAt < 300) return;
+                _lastExternalExitAt = now;
+                try { Callable.From(SpawnExternalPlayer).CallDeferred(); } catch { }
+            };
+            if (!process.Start())
+            {
+                BridgeLog.Warn("[fanfare] afplay 没起来");
+                return;
+            }
+            lock (Gate) _process = process;
+        }
+        catch (Exception e)
+        {
+            BridgeLog.Warn("[fanfare] afplay 失败: " + e.Message);
+        }
+    }
+
+    private static void StartGodotPlayer(string path)
+    {
+        if (!EnsurePlayer()) return;
+        var stream = LoadStream(path);
+        if (stream == null)
+        {
+            BridgeLog.Warn("[fanfare] 无法解码：" + path);
+            _watching = false;
+            return;
+        }
+        _player!.Stream = stream;
+        _player.VolumeDb = 0f;
+        _player.StreamPaused = false;
+        _player.Play();
+    }
+
+    /// <summary>
+    /// 非 macOS 的常驻播放器：只建一次、永不 QueueFree。
+    /// 销毁仍在播放的通道会在 FMOD 里等全局锁（实测能把主线程挂死），这里彻底不做这件事。
+    /// </summary>
+    private static bool EnsurePlayer()
+    {
+        if (_player != null && GodotObject.IsInstanceValid(_player))
+            return true;
+        if (Engine.GetMainLoop() is not SceneTree tree || tree.Root == null)
+            return false;
+
+        var player = new AudioStreamPlayer { Name = "WhaleLossSong", VolumeDb = 0f };
+        player.Finished += () =>
+        {
+            try
+            {
+                if (!_watching || _fading || !GodotObject.IsInstanceValid(player)) return;
+                player.Play();
+            }
+            catch { }
+        };
+        tree.Root.AddChild(player);
+        _player = player;
+        return true;
     }
 
     private static AudioStream? LoadStream(string path)
@@ -227,58 +287,92 @@ internal static class LossSong
     {
         _watching = false;
         if (_fading) return;
-        if (_player == null || !GodotObject.IsInstanceValid(_player))
-        {
-            StopCurrent(keepWatch: false);
-            return;
-        }
-
         _fading = true;
-        var player = _player;
+        try { Callable.From(() => FadeOutOnMain(seconds)).CallDeferred(); }
+        catch { StopPlayback("fade-dispatch-failed"); }
+    }
+
+    private static void FadeOutOnMain(double seconds)
+    {
         try
         {
+            if (OperatingSystem.IsMacOS())
+            {
+                var tree = Engine.GetMainLoop() as SceneTree;
+                var timer = tree?.CreateTimer(seconds);
+                if (timer != null) timer.Timeout += () => StopPlayback("fade");
+                else StopPlayback("fade");
+                return;
+            }
+
+            if (_player == null || !GodotObject.IsInstanceValid(_player))
+            {
+                StopPlayback("no-player");
+                return;
+            }
+            var player = _player;
             _fade = player.CreateTween();
             _fade.TweenProperty(player, "volume_db", SilentDb, seconds);
-            _fade.TweenCallback(Callable.From(() => Stop(player)));
+            // 到点只暂停 + 静音，不 Stop、不销毁通道。
+            _fade.TweenCallback(Callable.From(() => StopPlayback("fade")));
         }
         catch (Exception e)
         {
             BridgeLog.Warn("[fanfare] 淡出失败: " + e.Message);
-            Stop(player);
+            StopPlayback("fade-failed");
         }
     }
 
     private static void StopCurrent(bool keepWatch)
     {
+        StopPlayback("stop-current");
+        if (!keepWatch) _watching = false;
+    }
+
+    /// <summary>
+    /// 停止失败曲。macOS 只杀 afplay 子进程；其它平台只做「静音 + 暂停」，
+    /// 播放器常驻复用 —— 销毁正在播放的通道会在 FMOD 里等全局锁，能把主线程挂死。
+    /// </summary>
+    private static void StopPlayback(string reason)
+    {
+        Process? process;
+        lock (Gate)
+        {
+            process = _process;
+            _process = null;
+        }
+        if (process != null)
+        {
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                BridgeLog.Info($"[fanfare] 停止失败曲（{reason}）");
+            }
+            catch (Exception e)
+            {
+                BridgeLog.Warn("[fanfare] 结束 afplay 失败: " + e.Message);
+            }
+            finally
+            {
+                try { process.Dispose(); } catch { }
+            }
+        }
+
+        if (_player != null && GodotObject.IsInstanceValid(_player))
+        {
+            try
+            {
+                _player.StreamPaused = true;
+                _player.VolumeDb = 0f;
+            }
+            catch { }
+        }
+
+        _fading = false;
         if (_fade != null)
         {
             try { _fade.Kill(); } catch { }
             _fade = null;
-        }
-        if (_player != null) Stop(_player);
-        _player = null;
-        _fading = false;
-        if (!keepWatch) _watching = false;
-    }
-
-    private static void Stop(AudioStreamPlayer player)
-    {
-        try
-        {
-            if (_fade != null)
-            {
-                try { _fade.Kill(); } catch { }
-                _fade = null;
-            }
-            if (!GodotObject.IsInstanceValid(player) || player.IsQueuedForDeletion()) return;
-            player.Stop();
-            player.QueueFree();
-        }
-        catch { }
-        finally
-        {
-            _fading = false;
-            if (ReferenceEquals(_player, player)) _player = null;
         }
     }
 
