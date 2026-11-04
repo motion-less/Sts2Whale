@@ -334,6 +334,26 @@ public static class SolverBridge
             if (hpSoFar > 0) parts.Add($"本场已掉 {hpSoFar} 血");
             if (parts.Count == 0) return;
 
+            // 每场搜索一行实测记录，写进不会被战斗结束清掉的 agent_bridge.log：
+            // 以后判断「快不快」只用这一行对比（展开数 / 墙钟 / 每秒 / GC 停顿），
+            // 不要再拿瞬时采样比——同一场战斗不同回合的速率能差 2~3 倍。
+            try
+            {
+                double seconds = result.TotalSearchElapsed.TotalSeconds;
+                long nodes = result.TotalExpandedNodes > 0 ? result.TotalExpandedNodes : expanded;
+                if (seconds >= 0.5 && nodes >= 200)
+                {
+                    BridgeLog.Info(
+                        $"[search] expanded={nodes:N0} elapsed_ms={(long)(seconds * 1000)} " +
+                        $"rate={(long)(nodes / seconds):N0}/s " +
+                        $"gc_pause_ms={(long)result.TotalGcPauseDuration.TotalMilliseconds} " +
+                        $"gen2={result.TotalGen2Collections} " +
+                        $"max_gap_ms={result.MaxMainThreadFrameGapMilliseconds:0} " +
+                        $"planned_end_turn={result.CombatEndedTurn?.ToString() ?? "-"}");
+                }
+            }
+            catch { }
+
             _planLine = string.Join("，", parts);
             SpeakPlan(_planLine, hpLost, endedTurn);
             var signal = _planSignal;
