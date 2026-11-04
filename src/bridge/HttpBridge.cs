@@ -160,6 +160,9 @@ public static class HttpBridge
                         ["attached"] = BridgePump.IsAttached,
                         ["mod"] = "Sts2AgentBridge",
                         ["version"] = "0.7.0",
+                        // 主线程一旦卡死，这里能直接看出卡多久、最后在哪一步（HTTP 线程不受影响）。
+                        ["mainThreadStalledMs"] = MainThreadWatchdog.StalledMs,
+                        ["lastStage"] = MainThreadWatchdog.LastStage,
                     }));
 
                 case "/state":

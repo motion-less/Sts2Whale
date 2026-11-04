@@ -29,16 +29,20 @@ public static class BridgePump
 
         _handler = Drain;
         _tree.ProcessFrame += _handler;
+        MainThreadWatchdog.Start();
         BridgeLog.Info("main-thread pump installed on SceneTree.ProcessFrame");
     }
 
     private static void Drain()
     {
+        MainThreadWatchdog.Beat("drain");
         FpsProbe.Tick();
         RunMemory.Tick();
         var d0 = (long)Godot.Time.GetTicksUsec();
         void T(string name, Action fn)
         {
+            // 心跳打在调用之前：真卡在某一步时，看门狗读到的「最后阶段」就是卡住的那一步。
+            MainThreadWatchdog.Beat(name);
             var t0 = (long)Godot.Time.GetTicksUsec();
             fn();
             FpsProbe.Mark(name, ((long)Godot.Time.GetTicksUsec() - t0) / 1000.0);
