@@ -115,7 +115,18 @@ internal sealed record SolverSettingsData
     public bool UseNoveltyPortfolio { get; init; }
     public bool UseEarlyTurnExploration { get; init; }
     public double? SearchTimeLimitSeconds { get; init; }
-    public bool AutoConfigureServerGc { get; init; } = true;
+    /// <summary>
+    /// 是否把游戏的 runtimeconfig 改成 Server GC。**默认关闭**（工作站 GC）。
+    ///
+    /// 实测（Mac 10 核 / 16 GB，同一场搜索、分配速率都是 ~111 MB/s）：
+    ///   ServerGC   : 托管堆 1,218–2,497 MB、Gen2 665 MB、LOH 551–668 MB、GC 时间占比 13.9%（峰值 26%）
+    ///   工作站 GC  : 托管堆 235–277 MB、Gen2 91 MB、LOH 84–93 MB、GC 时间占比 3.6%（峰值 11%）
+    ///   进程 footprint 也从 5.7 GB 降到 3.2 GB。
+    /// 这个负载是「海量短命对象 + 很小的活对象」，ServerGC 每核一份堆带来的各代缓冲与
+    /// 碎片（10 个堆各留一段 LOH/Gen2）纯属浪费，而它的吞吐优势在这里用不上。
+    /// 想要旧行为的玩家可以在性能面板里重新打开。
+    /// </summary>
+    public bool AutoConfigureServerGc { get; init; }
     public bool EnableNoGcRegion { get; init; } = true;
     public double? NoGcRegionBudgetGigabytes { get; init; } = 16d;
     public int? SearchBeamWidth { get; init; }
