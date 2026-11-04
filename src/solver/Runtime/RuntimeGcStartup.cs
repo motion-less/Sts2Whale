@@ -42,6 +42,11 @@ internal static class RuntimeGcStartup
         try
         {
             Status = RuntimeGcStartupConfig.Apply(path, enabled);
+            // 这条走桥接日志：求解器自己的日志会在战斗结束时被清掉，而 GC 配置到底有没有生效
+            // 必须能在 agent_bridge.log 里直接查到（之前就因为文件被还原成「无 GC 键」而误判过）。
+            Sts2AgentBridge.BridgeLog.Info(
+                $"[gc] enabled={enabled} status={Status} heapCount={RuntimeGcStartupConfig.ResolveHeapCount()} " +
+                $"isServerGc={System.Runtime.GCSettings.IsServerGC}");
             Entry.Logger.Info(
                 $"[CombatSolver] RUNTIME_GC_STARTUP status={Status} next_launch_enabled={enabled} config={path}");
         }
