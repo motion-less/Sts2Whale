@@ -36,6 +36,8 @@ internal static class LossSong
     private static Process? _process;
     private static string _externalPath = "";
     private static long _lastExternalExitAt;
+    private static long _lastStartAt;
+    private static int _spawnCount;
     private static Tween? _fade;
     private static bool _watching;
     private static bool _fading;
@@ -118,6 +120,11 @@ internal static class LossSong
             LogMissingOnce();
             return;
         }
+        // 求解器结果会在「只剩阵亡路线」和「又算出生路」之间来回翻，5 秒内不重复起播：
+        // 每次起播都要 fork 一个 afplay 子进程，来回切会把主线程拖成一小段一小段的。
+        long now = System.Environment.TickCount64;
+        if (now - _lastStartAt < 5000) return;
+        _lastStartAt = now;
         _watching = true;
         _nextDeathCheckAt = 0;   // 开播后第一帧就查一次，别等 3 秒
         Callable.From(() => StartOnMain(path)).CallDeferred();
@@ -214,6 +221,9 @@ internal static class LossSong
                 return;
             }
             lock (Gate) _process = process;
+            _spawnCount++;
+            if (_spawnCount % 20 == 0)
+                BridgeLog.Info($"[fanfare] afplay 已起播 {_spawnCount} 次");
         }
         catch (Exception e)
         {
