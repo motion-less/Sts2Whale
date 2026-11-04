@@ -38,6 +38,7 @@ public static class BridgePump
         MainThreadWatchdog.Beat("drain");
         FpsProbe.Tick();
         RunMemory.Tick();
+        RunEndCompaction.Tick();
         var d0 = (long)Godot.Time.GetTicksUsec();
         void T(string name, Action fn)
         {

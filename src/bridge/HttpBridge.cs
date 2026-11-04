@@ -343,6 +343,44 @@ public static class HttpBridge
                     }
 
                 // /choices、/choose（按索引选牌）已删除：选牌走 /request + /respond。
+                case "/diag/dicts":
+                    {
+                        // 排查长跑内存回涨：把静态字典按条目数排序。
+                        // min 默认 10 万条；?min=1000 可以看更小的。反射只在本进程内，不碰游戏状态。
+                        int min = 100_000;
+                        int q = request.Path.IndexOf("min=", StringComparison.Ordinal);
+                        if (q >= 0 && int.TryParse(request.Path[(q + 4)..].Split('&')[0], out int parsed) && parsed >= 0)
+                            min = parsed;
+                        return (200, Json(DiagDicts.Scan(min)));
+                    }
+
+                case "/diag/dicts/clear":
+                    {
+                        // 只清 RitsuLib 的模型身份表：这两个是缓存语义，清掉后按需重建。
+                        bool a = DiagDicts.Clear("STS2RitsuLib.Models.Identity.ModModelIdentityRegistry",
+                            "ObjectToIdentity", out int n1);
+                        bool b = DiagDicts.Clear("STS2RitsuLib.Models.Identity.ModModelIdentityRegistry",
+                            "IdentityToObject", out int n2);
+                        return (200, Json(new Dictionary<string, object>
+                        {
+                            ["ok"] = a && b,
+                            ["objectToIdentity"] = n1,
+                            ["identityToObject"] = n2,
+                        }));
+                    }
+
+                case "/compact":
+                    {
+                        // 手动做一次「Gen2 + LOH 压缩」。会 STW 数秒，只在主菜单/结算界面用。
+                        RunEndCompaction.Schedule("manual");
+                        return (200, Json(new Dictionary<string, object>
+                        {
+                            ["ok"] = true,
+                            ["note"] = "已排队；效果看 agent_bridge.log 里的 [compact] start/done",
+                            ["lastReclaimedMb"] = RunEndCompaction.LastReclaimedMb,
+                        }));
+                    }
+
                 case "/dump":
                     return (200, Json(await BridgePump.OnMain(Choices.Dump)));
 
